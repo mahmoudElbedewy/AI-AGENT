@@ -15,4 +15,4 @@ COPY . /app/
 
 EXPOSE 7860
 
-CMD ["sh", "-c", "python manage.py migrate && daphne -b 0.0.0.0 -p 7860 core.asgi:application"]
+CMD ["python", "manage.py", "runserver", "0.0.0.0:7860"]
