@@ -28,7 +28,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 load_dotenv()
 
-# ====================== البنية التحتية لـ OpenRouter لعام 2026 ======================
+# ====================== LLMS ======================
 light_1_deepseek = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -71,7 +71,7 @@ light_llm = light_1_deepseek.with_fallbacks([
     light_5_llama_or
 ])
 
-# ==================== 2. التشكيلة الثقيلة ====================
+# ==================== heavy llms ====================
 heavy_1_gemma = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -192,7 +192,6 @@ def query_uploaded_pdf(query: str, config: RunnableConfig) -> str:
                 file_content = file_content.decode('utf-8', errors='ignore')
             all_text += f"\n--- المحتوى المستخرج من ملف ({file_name}) ---\n{file_content}"
         
-        # إذا كان النص صغيراً، نمرره بالكامل كـ Context لتفادي لغبطة الـ Vector Store
         if len(all_text) < 4000:
             return f"المعلومات المستخرجة من المستندات المرفوعة:\n\n{all_text}"
             
@@ -233,7 +232,6 @@ def analyze_uploaded_image(query: str, config: RunnableConfig) -> str:
             
         file_name, file_content_b64 = row
         
-        # التأكد من تنظيف وتحضير نص الـ Base64
         if isinstance(file_content_b64, bytes):
             base64_str = file_content_b64.decode('utf-8')
         else:
@@ -242,18 +240,15 @@ def analyze_uploaded_image(query: str, config: RunnableConfig) -> str:
         if "data:image" in base64_str:
             base64_str = base64_str.split(",")[-1]
         
-        # 1. تحديد الـ Mime Type ديناميكياً بناءً على امتداد الملف لتجنب رفض السيرفر
         ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
         mime_type = f"image/{ext}"
         
-        # 2. استدعاء الموديل الرسمي مباشرة من مكتبة جوجل المحدثة
         vision_model = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash", 
             google_api_key=os.getenv("GOOGLE_API_KEY"),
             temperature=0,
         )
         
-        # 3. بناء هيكل الـ Multimodal النظيف والمطابق للتوثيق الجديد لـ Base64 inline data
         message = HumanMessage(
             content=[
                 {"type": "text", "text": f"حلل الصورة المرفقة وأجب على سؤال المستخدم باللغة العربية بدقة.\nسؤال المستخدم: {query}"},
@@ -341,7 +336,6 @@ class ChatConsumer(WebsocketConsumer):
         self.memory = SqliteSaver(self.conn)
         self.memory.setup()
 
-        # الإصلاح: استخدام prompt لتمرير الـ System Prompt بدلاً من كائن الـ prompt المباشر المرفوض حديثاً
         self.heavy_agent = create_react_agent(
             heavy_llm, tools, checkpointer=self.memory, prompt=formatted_system_prompt
         )
@@ -459,7 +453,6 @@ class ChatConsumer(WebsocketConsumer):
                 raw_content = response["messages"][-1].content
             except Exception as agent_err:
                 print(f"⚠️ قفز الطوارئ المطلق للموديل الاحتياطي...")
-                # الإصلاح: استخراج الـ content مباشرة كـ string لتفادي الـ AttributeError اللاحق
                 response = light_1_deepseek.invoke(messages_to_send)
                 raw_content = response.content
 
