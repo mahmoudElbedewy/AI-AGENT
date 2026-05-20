@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app/
 
+# عمل الـ migrations لتهيئة جداول قاعدة البيانات قبل التشغيل
+RUN python manage.py migrate
+
 EXPOSE 7860
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:7860"]
+# تشغيل daphne ليدعم الـ WebSockets (wss) على Hugging Face
+CMD ["daphne", "-b", "0.0.0.0", "-p", "7860", "core.asgi:application"]
