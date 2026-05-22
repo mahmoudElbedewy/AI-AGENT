@@ -13,10 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app/
 
-# عمل الـ migrations لتهيئة جداول قاعدة البيانات قبل التشغيل
-RUN python manage.py migrate
 
 EXPOSE 7860
-
-# تشغيل daphne ليدعم الـ WebSockets (wss) على Hugging Face
-CMD ["daphne", "-b", "0.0.0.0", "-p", "7860", "core.asgi:application"]
+CMD python manage.py migrate && \
+    python manage.py shell -c "from django.contrib.auth.models import User; User.objects.filter(username='m').exists() or User.objects.create_superuser('m', 'm@m.com', 'm')" && \
+    daphne -b 0.0.0.0 -p 7860 core.asgi:application
