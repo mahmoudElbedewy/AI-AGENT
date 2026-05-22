@@ -67,8 +67,8 @@ light_5_llama_or = ChatOpenAI(
     temperature=0,
 )
 
-light_llm = light_1_deepseek.with_fallbacks(
-    [light_2_gemini_direct, light_3_groq, light_4_openai_oss, light_5_llama_or]
+light_llm =light_2_gemini_direct.with_fallbacks(
+    [light_3_groq, light_5_llama_or, light_4_openai_oss, light_1_deepseek]
 )
 
 # ==================== heavy llms ====================
@@ -100,8 +100,8 @@ heavy_4_openai_oss = ChatOpenAI(
     temperature=0,
 )
 
-heavy_llm = heavy_1_gemma.with_fallbacks(
-    [heavy_2_groq, heavy_3_gemini_pro, heavy_4_openai_oss]
+heavy_llm = heavy_3_gemini_pro.with_fallbacks(
+    [heavy_2_groq, heavy_1_gemma, heavy_4_openai_oss]
 )
 
 # ====================== Tools ======================
@@ -508,7 +508,6 @@ class ChatConsumer(WebsocketConsumer):
                 cursor.execute("""
                     SELECT file_name FROM thread_attachments
                     WHERE thread_id = ? AND file_type = 'pdf'
-                    AND uploaded_at >= datetime('now', '-5 minutes')
                     ORDER BY uploaded_at DESC LIMIT 1
                 """, (self.thread_id,))
                 pdf = cursor.fetchone()
@@ -518,7 +517,6 @@ class ChatConsumer(WebsocketConsumer):
                 cursor.execute("""
                     SELECT file_name FROM thread_attachments
                     WHERE thread_id = ? AND file_type = 'image'
-                    AND uploaded_at >= datetime('now', '-5 minutes')
                     ORDER BY uploaded_at DESC LIMIT 1
                 """, (self.thread_id,))
                 img = cursor.fetchone()
