@@ -106,7 +106,6 @@ heavy_llm = heavy_1_gemma.with_fallbacks(
 
 # ====================== Tools ======================
 
-
 @tool
 def calculator(expression: str) -> str:
     """Use this tool strictly for performing mathematical calculations and expressions."""
@@ -177,14 +176,13 @@ def query_uploaded_pdf(query: str, config: RunnableConfig) -> str:
         thread_id = config["configurable"].get("thread_id")
         print(f"🔍 [PDF Tool]: Fetching attachments for session: {thread_id}")
 
-        conn = sqlite3.connect("db.sqlite3")
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT file_name, file_content FROM thread_attachments WHERE thread_id = ? AND file_type = 'pdf' ORDER BY uploaded_at DESC",
-            (str(thread_id),),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+        with sqlite3.connect("db.sqlite3", timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT file_name, file_content FROM thread_attachments WHERE thread_id = ? AND file_type = 'pdf' ORDER BY uploaded_at DESC",
+                (str(thread_id),),
+            )
+            rows = cursor.fetchall()
 
         if not rows:
             return "System Notification: No uploaded PDF files were found in the database for this session yet."
@@ -229,18 +227,17 @@ def analyze_uploaded_image(query: str, config: RunnableConfig) -> str:
         thread_id = config["configurable"].get("thread_id")
         print(f"📸 [Image Tool]: Pulling latest image for session: {thread_id}")
 
-        conn = sqlite3.connect("db.sqlite3")
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT file_name, file_content FROM thread_attachments 
-            WHERE thread_id = ? AND file_type = 'image' 
-            ORDER BY uploaded_at DESC LIMIT 1
-        """,
-            (str(thread_id),),
-        )
-        row = cursor.fetchone()
-        conn.close()
+        with sqlite3.connect("db.sqlite3", timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT file_name, file_content FROM thread_attachments 
+                WHERE thread_id = ? AND file_type = 'image' 
+                ORDER BY uploaded_at DESC LIMIT 1
+            """,
+                (str(thread_id),),
+            )
+            row = cursor.fetchone()
 
         if not row:
             return "System Notification: No uploaded images were found in the database for this session currently."
@@ -271,9 +268,10 @@ def analyze_uploaded_image(query: str, config: RunnableConfig) -> str:
                     "text": f"Analyze the attached image and address the user's inquiry accurately. Maintain a natural, conversational tone in the same language as the user.\nUser Query: {query}",
                 },
                 {
-                    "type": "image",
-                    "base64": base64_str,
-                    "mime_type": mime_type,
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64_str}"
+                    },
                 },
             ]
         )
@@ -285,15 +283,25 @@ def analyze_uploaded_image(query: str, config: RunnableConfig) -> str:
 
 
 @tool
-def analyze_youtube_video(youtube_url: str, query: str):
+def analyze_youtube_video(youtube_url: str, query: str) -> str:
     """Exclusive tool to use ONLY when the user provides a YouTube video URL/Link.
     You MUST pass both the 'youtube_url' and the user's 'query' to this tool to extract the right context."""
-
     try:
-        loader = YoutubeLoader(
-            video_id=youtube_url, add_video_info=False, language=["ar", "en"]
-        )
-        docs = loader.load()
+        video_id_match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11})', youtube_url)
+        if not video_id_match:
+            return "Error: Invalid YouTube URL format. Please provide a valid link."
+        
+        video_id = video_id_match.group(1)
+        clean_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        try:
+            loader = YoutubeLoader.from_youtube_url(
+                clean_url, add_video_info=False, language=["ar", "en"]
+            )
+            docs = loader.load()
+        except Exception as cloud_err:
+            print(f"⚠️ YouTube IP Blocked on Server: {cloud_err}")
+            return "عذراً يا غالي، يوتيوب يفرض حالياً قيوداً على خوادم الاستضافة تمنع قراءة النصوص التلقائية (Cloud IP Restriction). من فضلك انسخ نص الفيديو وضعه لي هنا مباشرة لأقوم بتلخيصه أو تحليله لك."
 
         if not docs or len(docs) == 0:
             return "Error: Could not retrieve a text transcript for this YouTube video. Captions might be disabled."
@@ -358,54 +366,12 @@ Handling Attachments & Document Awareness:
 """
 
 _HEAVY_KEYWORDS = {
-    "كود",
-    "برمج",
-    "برمجة",
-    "code",
-    "python",
-    "django",
-    "sql",
-    "api",
-    "خوارزمية",
-    "error",
-    "bug",
-    "class",
-    "function",
-    "pdf",
-    "ملف",
-    "صورة",
-    "صوره",
-    "screenshot",
-    "لقطة",
-    "لخص",
-    "لخصلي",
-    "تلخيص",
-    "حلل",
-    "تحليل",
-    "قارن",
-    "مقارنة",
-    "تقرير",
-    "احسب",
-    "حساب",
-    "معادلة",
-    "رياضيات",
-    "رئيس",
-    "ملك",
-    "حاكم",
-    "وزير",
-    "دولة",
-    "عمر",
-    "سن",
-    "من هو",
-    "مين",
-    "كم",
-    "يوتيوب",
-    "فيديو",
-    "youtube",
-    "video",
-    "رابط",
-    "لينك",
-    "link",
+    "كود", "برمج", "برمجة", "code", "python", "django", "sql", "api", "خوارزمية", 
+    "error", "bug", "class", "function", "pdf", "ملف", "صورة", "صوره", "screenshot", 
+    "لقطة", "لخص", "لخصلي", "تلخيص", "حلل", "تحليل", "قارن", "مقارنة", "تقرير", 
+    "احسب", "حساب", "معادلة", "رياضيات", "رئيس", "ملك", "حاكم", "وزير", "دولة", 
+    "عمر", "سن", "من هو", "مين", "كم", "يوتيوب", "فيديو", "youtube", "video", 
+    "رابط", "لينك", "link"
 }
 
 
@@ -513,25 +479,54 @@ class ChatConsumer(WebsocketConsumer):
 
     def update_user_memories(self, new_messages_text):
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "SELECT facts FROM user_memories WHERE thread_id = ?", (self.thread_id,)
-            )
-            row = cursor.fetchone()
-            current_facts = row[0] if row else ""
+            with sqlite3.connect(self.db, timeout=30) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT facts FROM user_memories WHERE thread_id = ?", (self.thread_id,)
+                )
+                row = cursor.fetchone()
+                current_facts = row[0] if row else ""
 
-            memory_prompt = f"""You are an advanced information extraction assistant. Based on the given interaction conversation, update the permanent "discovered facts" profile about the user.
-            Current profile facts: {current_facts}
-            New conversation message block: {new_messages_text}"""
+                memory_prompt = f"""You are an advanced information extraction assistant. Based on the given interaction conversation, update the permanent "discovered facts" profile about the user.
+                Current profile facts: {current_facts}
+                New conversation message block: {new_messages_text}"""
 
-            updated_facts = light_llm.invoke(memory_prompt).content.strip()
-            cursor.execute(
-                "REPLACE INTO user_memories (thread_id, facts) VALUES (?, ?)",
-                (self.thread_id, updated_facts),
-            )
-            self.conn.commit()
+                updated_facts = light_llm.invoke(memory_prompt).content.strip()
+                cursor.execute(
+                    "REPLACE INTO user_memories (thread_id, facts) VALUES (?, ?)",
+                    (self.thread_id, updated_facts),
+                )
+                conn.commit()
         except Exception as me:
             print(f"Memory update failed: {me}")
+
+    def _get_recent_file_context(self) -> str:
+        context = ""
+        try:
+            with sqlite3.connect(self.db, timeout=20) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT file_name FROM thread_attachments
+                    WHERE thread_id = ? AND file_type = 'pdf'
+                    AND uploaded_at >= datetime('now', '-5 minutes')
+                    ORDER BY uploaded_at DESC LIMIT 1
+                """, (self.thread_id,))
+                pdf = cursor.fetchone()
+                if pdf:
+                    context += f"\n[System Notice: The user just uploaded a PDF document named '{pdf[0]}'. If the current query is related to it or asks if you can see it, you MUST trigger the (query_uploaded_pdf) tool immediately!]\n"
+
+                cursor.execute("""
+                    SELECT file_name FROM thread_attachments
+                    WHERE thread_id = ? AND file_type = 'image'
+                    AND uploaded_at >= datetime('now', '-5 minutes')
+                    ORDER BY uploaded_at DESC LIMIT 1
+                """, (self.thread_id,))
+                img = cursor.fetchone()
+                if img:
+                    context += f"\n[System Notice: The user just uploaded an image/screenshot named '{img[0]}'. If the current query asks about it, you MUST trigger the (analyze_uploaded_image) tool immediately!]\n"
+        except Exception as e:
+            print(f"File context injection failed: {e}")
+        return context
 
     def disconnect(self, close_code):
         if hasattr(self, "conn"):
@@ -541,7 +536,6 @@ class ChatConsumer(WebsocketConsumer):
         text_data_json = json.loads(text_data)
         msg_type = text_data_json.get("type", "text")
 
-        # Determine language flavor for server replies dynamically if possible
         user_message_check = text_data_json.get("message", "")
         is_english = any(
             ord(char) < 128 for char in user_message_check if char.isalpha()
@@ -561,16 +555,17 @@ class ChatConsumer(WebsocketConsumer):
                     if text:
                         extracted_text += text + "\n"
 
-                cursor = self.conn.cursor()
-                unique_file_id = str(uuid.uuid4())
-                cursor.execute(
-                    """
-                    INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
-                    VALUES (?, ?, ?, ?, 'pdf')
-                """,
-                    (unique_file_id, self.thread_id, file_name, extracted_text),
-                )
-                self.conn.commit()
+                with sqlite3.connect(self.db, timeout=30) as conn:
+                    cursor = conn.cursor()
+                    unique_file_id = str(uuid.uuid4())
+                    cursor.execute(
+                        """
+                        INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
+                        VALUES (?, ?, ?, ?, 'pdf')
+                    """,
+                        (unique_file_id, self.thread_id, file_name, extracted_text),
+                    )
+                    conn.commit()
                 bot_reply = (
                     f"Successfully uploaded '{file_name}'. I am ready to answer your questions about it!"
                     if is_english
@@ -599,16 +594,17 @@ class ChatConsumer(WebsocketConsumer):
                 else:
                     image_b64_to_save = base64.b64encode(file_data).decode("utf-8")
 
-                cursor = self.conn.cursor()
-                unique_file_id = str(uuid.uuid4())
-                cursor.execute(
-                    """
-                    INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
-                    VALUES (?, ?, ?, ?, 'image')
-                """,
-                    (unique_file_id, self.thread_id, fileName, image_b64_to_save),
-                )
-                self.conn.commit()
+                with sqlite3.connect(self.db, timeout=30) as conn:
+                    cursor = conn.cursor()
+                    unique_file_id = str(uuid.uuid4())
+                    cursor.execute(
+                        """
+                        INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
+                        VALUES (?, ?, ?, ?, 'image')
+                    """,
+                        (unique_file_id, self.thread_id, fileName, image_b64_to_save),
+                    )
+                    conn.commit()
                 bot_reply = (
                     f"Successfully received the image '{fileName}'."
                     if is_english
@@ -626,19 +622,22 @@ class ChatConsumer(WebsocketConsumer):
         message = text_data_json.get("message", "")
 
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "SELECT facts FROM user_memories WHERE thread_id = ?", (self.thread_id,)
-            )
-            row = cursor.fetchone()
-            user_facts = row[0] if row else "No historic context data found yet."
+            with sqlite3.connect(self.db, timeout=30) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT facts FROM user_memories WHERE thread_id = ?", (self.thread_id,)
+                )
+                row = cursor.fetchone()
+                user_facts = row[0] if row else "No historic context data found yet."
 
             route_decision = _route_message(message)
             active_agent = (
                 self.heavy_agent if "HEAVY" in route_decision else self.light_agent
             )
 
-            formatted_user_message = f"[User Memory Context Profile]: {user_facts}\n[Current Active User Query]: {message}"
+            file_hint = self._get_recent_file_context()
+
+            formatted_user_message = f"[User Memory Context Profile]: {user_facts}\n{file_hint}[Current Active User Query]: {message}"
             messages_to_send = [("user", formatted_user_message)]
 
             try:
