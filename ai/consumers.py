@@ -530,162 +530,162 @@ class ChatConsumer(WebsocketConsumer):
         if hasattr(self, "conn"):
             self.conn.close()
 
-def receive(self, text_data):
-    text_data_json = json.loads(text_data)
-    msg_type = text_data_json.get("type", "text")
+    def receive(self, text_data):
+        text_data_json = json.loads(text_data)
+        msg_type = text_data_json.get("type", "text")
 
-    user_message_check = text_data_json.get("message", "")
-    is_english = any(ord(char) < 128 for char in user_message_check if char.isalpha())
+        user_message_check = text_data_json.get("message", "")
+        is_english = any(ord(char) < 128 for char in user_message_check if char.isalpha())
 
-    if msg_type == "file":
+        if msg_type == "file":
+            try:
+                file_name = text_data_json["file_name"]
+                file_data_b64 = text_data_json["file_data"]
+                file_bytes = base64.b64decode(file_data_b64)
+                pdf_file = io.BytesIO(file_bytes)
+                reader = pypdf.PdfReader(pdf_file)
+
+                extracted_text = ""
+                for page in reader.pages:
+                    text = page.extract_text()
+                    if text:
+                        extracted_text += text + "\n"
+
+                with sqlite3.connect(self.db, timeout=30) as conn:
+                    cursor = conn.cursor()
+                    unique_file_id = str(uuid.uuid4())
+                    cursor.execute(
+                        """
+                        INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
+                        VALUES (?, ?, ?, ?, 'pdf')
+                    """,
+                        (unique_file_id, self.thread_id, file_name, extracted_text),
+                    )
+                    conn.commit()
+                bot_reply = (
+                    f"Successfully uploaded '{file_name}'. I am ready to answer your questions about it!"
+                    if is_english
+                    else f"تم استلام ملف '{file_name}' بنجاح وهو جاهز الآن للإجابة."
+                )
+            except Exception as e:
+                bot_reply = "An error occurred" if is_english else "حدث خطأ أثناء معالجة الملف."
+            self.send(text_data=json.dumps({"reply": bot_reply}))
+            return
+
+        if msg_type == "image":
+            try:
+                fileName = text_data_json["file_name"]
+                file_data = text_data_json["file_data"]
+
+                if isinstance(file_data, str) and not file_data.startswith("data:image"):
+                    image_b64_to_save = file_data
+                elif isinstance(file_data, str) and file_data.startswith("data:image"):
+                    image_b64_to_save = file_data.split(",")[1]
+                else:
+                    image_b64_to_save = base64.b64encode(file_data).decode("utf-8")
+
+                with sqlite3.connect(self.db, timeout=30) as conn:
+                    cursor = conn.cursor()
+                    unique_file_id = str(uuid.uuid4())
+                    cursor.execute(
+                        """
+                        INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
+                        VALUES (?, ?, ?, ?, 'image')
+                    """,
+                        (unique_file_id, self.thread_id, fileName, image_b64_to_save),
+                    )
+                    conn.commit()
+                bot_reply = (
+                    f"Successfully received the image '{fileName}'."
+                    if is_english
+                    else f"تم استلام صورة '{fileName}' بنجاح وعيوني شيفاها دلوقتي، اسألني عنها في أي وقت!"
+                )
+            except Exception as e:
+                bot_reply = "An error occurred" if is_english else "حدث خطأ أثناء استقبال الصورة."
+            self.send(text_data=json.dumps({"reply": bot_reply}))
+            return
+
+        message = text_data_json.get("message", "")
+
         try:
-            file_name = text_data_json["file_name"]
-            file_data_b64 = text_data_json["file_data"]
-            file_bytes = base64.b64decode(file_data_b64)
-            pdf_file = io.BytesIO(file_bytes)
-            reader = pypdf.PdfReader(pdf_file)
-
-            extracted_text = ""
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    extracted_text += text + "\n"
-
             with sqlite3.connect(self.db, timeout=30) as conn:
                 cursor = conn.cursor()
-                unique_file_id = str(uuid.uuid4())
+                cursor.execute("SELECT facts FROM user_memories WHERE thread_id = ?", (self.thread_id,))
+                row = cursor.fetchone()
+                user_facts = row[0] if row else "No historic context data found yet."
+
                 cursor.execute(
                     """
-                    INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
-                    VALUES (?, ?, ?, ?, 'pdf')
+                    SELECT file_name, file_content FROM thread_attachments 
+                    WHERE thread_id = ? AND file_type = 'image' 
+                    ORDER BY uploaded_at DESC LIMIT 1
                 """,
-                    (unique_file_id, self.thread_id, file_name, extracted_text),
+                    (self.thread_id,),
                 )
-                conn.commit()
-            bot_reply = (
-                f"Successfully uploaded '{file_name}'. I am ready to answer your questions about it!"
-                if is_english
-                else f"تم استلام ملف '{file_name}' بنجاح وهو جاهز الآن للإجابة."
-            )
-        except Exception as e:
-            bot_reply = "An error occurred" if is_english else "حدث خطأ أثناء معالجة الملف."
-        self.send(text_data=json.dumps({"reply": bot_reply}))
-        return
+                image_row = cursor.fetchone()
 
-    if msg_type == "image":
-        try:
-            fileName = text_data_json["file_name"]
-            file_data = text_data_json["file_data"]
+            image_keywords = {"صوره", "صورة", "screenshot", "لقطة", "شايف", "دي", "المنشور", "image", "pic"}
+            is_asking_about_image = any(kw in message.lower() for kw in image_keywords)
 
-            if isinstance(file_data, str) and not file_data.startswith("data:image"):
-                image_b64_to_save = file_data
-            elif isinstance(file_data, str) and file_data.startswith("data:image"):
-                image_b64_to_save = file_data.split(",")[1]
-            else:
-                image_b64_to_save = base64.b64encode(file_data).decode("utf-8")
-
-            with sqlite3.connect(self.db, timeout=30) as conn:
-                cursor = conn.cursor()
-                unique_file_id = str(uuid.uuid4())
-                cursor.execute(
-                    """
-                    INSERT INTO thread_attachments (file_id, thread_id, file_name, file_content, file_type)
-                    VALUES (?, ?, ?, ?, 'image')
-                """,
-                    (unique_file_id, self.thread_id, fileName, image_b64_to_save),
-                )
-                conn.commit()
-            bot_reply = (
-                f"Successfully received the image '{fileName}'."
-                if is_english
-                else f"تم استلام صورة '{fileName}' بنجاح وعيوني شيفاها دلوقتي، اسألني عنها في أي وقت!"
-            )
-        except Exception as e:
-            bot_reply = "An error occurred" if is_english else "حدث خطأ أثناء استقبال الصورة."
-        self.send(text_data=json.dumps({"reply": bot_reply}))
-        return
-
-    message = text_data_json.get("message", "")
-
-    try:
-        with sqlite3.connect(self.db, timeout=30) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT facts FROM user_memories WHERE thread_id = ?", (self.thread_id,))
-            row = cursor.fetchone()
-            user_facts = row[0] if row else "No historic context data found yet."
-
-            cursor.execute(
-                """
-                SELECT file_name, file_content FROM thread_attachments 
-                WHERE thread_id = ? AND file_type = 'image' 
-                ORDER BY uploaded_at DESC LIMIT 1
-            """,
-                (self.thread_id,),
-            )
-            image_row = cursor.fetchone()
-
-        image_keywords = {"صوره", "صورة", "screenshot", "لقطة", "شايف", "دي", "المنشور", "image", "pic"}
-        is_asking_about_image = any(kw in message.lower() for kw in image_keywords)
-
-        if image_row and is_asking_about_image:
-            from langchain_core.messages import HumanMessage
-            
-            file_name, base64_str = image_row
-            if isinstance(base64_str, bytes):
-                base64_str = base64_str.decode("utf-8")
-            if "data:image" in base64_str:
-                base64_str = base64_str.split(",")[-1]
-                
-            ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
-            mime_type = f"image/{ext}"
-
-            formatted_content = [
-                {
-                    "type": "text",
-                    "text": f"[User Memory Context]: {user_facts}\n[System Notification: You are looking directly at the user's latest uploaded image named '{file_name}'].\nUser Query: {message}"
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{base64_str}"}
-                }
-            ]
-            messages_to_send = [HumanMessage(content=formatted_content)]
-            
-            active_agent = self.light_agent 
-        else:
-            route_decision = _route_message(message)
-            active_agent = self.heavy_agent if "HEAVY" in route_decision else self.light_agent
-            file_hint = self._get_recent_file_context()
-            formatted_user_message = f"[User Memory Context Profile]: {user_facts}\n{file_hint}[Current Active User Query]: {message}"
-            messages_to_send = [("user", formatted_user_message)]
-
-        try:
-            response = active_agent.invoke({"messages": messages_to_send}, config=self.config)
-            raw_content = response["messages"][-1].content
-        except Exception as agent_err:
-            print(f"⚠️ Circuit breaker triggered: Diverting to fallback model... {agent_err}")
             if image_row and is_asking_about_image:
-                response = vision_llm_direct.invoke(messages_to_send)
-                raw_content = response.content
+                from langchain_core.messages import HumanMessage
+                
+                file_name, base64_str = image_row
+                if isinstance(base64_str, bytes):
+                    base64_str = base64_str.decode("utf-8")
+                if "data:image" in base64_str:
+                    base64_str = base64_str.split(",")[-1]
+                    
+                ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
+                mime_type = f"image/{ext}"
+
+                formatted_content = [
+                    {
+                        "type": "text",
+                        "text": f"[User Memory Context]: {user_facts}\n[System Notification: You are looking directly at the user's latest uploaded image named '{file_name}'].\nUser Query: {message}"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{base64_str}"}
+                    }
+                ]
+                messages_to_send = [HumanMessage(content=formatted_content)]
+                
+                active_agent = self.light_agent 
             else:
-                response = light_1_deepseek.invoke(messages_to_send)
-                raw_content = response.content
+                route_decision = _route_message(message)
+                active_agent = self.heavy_agent if "HEAVY" in route_decision else self.light_agent
+                file_hint = self._get_recent_file_context()
+                formatted_user_message = f"[User Memory Context Profile]: {user_facts}\n{file_hint}[Current Active User Query]: {message}"
+                messages_to_send = [("user", formatted_user_message)]
 
-        if isinstance(raw_content, str):
-            bot_reply = raw_content
-        elif isinstance(raw_content, list):
-            texts = [part["text"] for part in raw_content if isinstance(part, dict) and "text" in part]
-            bot_reply = " ".join(texts) if texts else str(raw_content)
-        else:
-            bot_reply = str(raw_content)
+            try:
+                response = active_agent.invoke({"messages": messages_to_send}, config=self.config)
+                raw_content = response["messages"][-1].content
+            except Exception as agent_err:
+                print(f"⚠️ Circuit breaker triggered: Diverting to fallback model... {agent_err}")
+                if image_row and is_asking_about_image:
+                    response = vision_llm_direct.invoke(messages_to_send)
+                    raw_content = response.content
+                else:
+                    response = light_1_deepseek.invoke(messages_to_send)
+                    raw_content = response.content
 
-        threading.Thread(
-            target=self.update_user_memories,
-            args=(f"User: {message}\nBot: {bot_reply}",),
-            daemon=True,
-        ).start()
+            if isinstance(raw_content, str):
+                bot_reply = raw_content
+            elif isinstance(raw_content, list):
+                texts = [part["text"] for part in raw_content if isinstance(part, dict) and "text" in part]
+                bot_reply = " ".join(texts) if texts else str(raw_content)
+            else:
+                bot_reply = str(raw_content)
 
-    except Exception as e:
-        bot_reply = "An error occurred with the network connection." if is_english else "عذراً يا غالي، يبدو أن هناك مشكلة اتصال عامة بالشبكة."
+            threading.Thread(
+                target=self.update_user_memories,
+                args=(f"User: {message}\nBot: {bot_reply}",),
+                daemon=True,
+            ).start()
 
-    self.send(text_data=json.dumps({"reply": bot_reply}))
+        except Exception as e:
+            bot_reply = "An error occurred with the network connection." if is_english else "عذراً يا غالي، يبدو أن هناك مشكلة اتصال عامة بالشبكة."
+
+        self.send(text_data=json.dumps({"reply": bot_reply}))
