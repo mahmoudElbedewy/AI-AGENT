@@ -537,6 +537,9 @@ class ChatConsumer(WebsocketConsumer):
         user_message_check = text_data_json.get("message", "")
         is_english = any(ord(char) < 128 for char in user_message_check if char.isalpha())
 
+        # ==========================================
+        # 1. معالجة ملفات PDF
+        # ==========================================
         if msg_type == "file":
             try:
                 file_name = text_data_json["file_name"]
@@ -572,6 +575,9 @@ class ChatConsumer(WebsocketConsumer):
             self.send(text_data=json.dumps({"reply": bot_reply}))
             return
 
+        # ==========================================
+        # 2. معالجة رفع الصور
+        # ==========================================
         if msg_type == "image":
             try:
                 fileName = text_data_json["file_name"]
@@ -605,6 +611,9 @@ class ChatConsumer(WebsocketConsumer):
             self.send(text_data=json.dumps({"reply": bot_reply}))
             return
 
+        # ==========================================
+        # 3. معالجة الرسائل (صور أو نصوص)
+        # ==========================================
         message = text_data_json.get("message", "")
 
         try:
@@ -624,12 +633,10 @@ class ChatConsumer(WebsocketConsumer):
                 )
                 image_row = cursor.fetchone()
 
-            image_keywords = {"صوره", "صورة", "screenshot", "لقطة", "شايف", "دي", "المنشور", "image", "pic"}
+            image_keywords = {"صوره", "صورة", "screenshot", "لقطة", "شايف", "دي", "المنشور", "image", "pic", "حل", "اشرح"}
             is_asking_about_image = any(kw in message.lower() for kw in image_keywords)
 
             if image_row and is_asking_about_image:
-                from langchain_core.messages import HumanMessage
-                
                 file_name, base64_str = image_row
                 if isinstance(base64_str, bytes):
                     base64_str = base64_str.decode("utf-8")
@@ -639,19 +646,30 @@ class ChatConsumer(WebsocketConsumer):
                 ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
                 mime_type = f"image/{ext}"
 
-                formatted_content = [
+                formatted_messages = [
                     {
-                        "type": "text",
-                        "text": f"[User Memory Context]: {user_facts}\n[System Notification: You are looking directly at the user's latest uploaded image named '{file_name}'].\nUser Query: {message}"
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{base64_str}"}
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"[User Memory Context]: {user_facts}\nUser Query about the attached image: {message}"
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime_type};base64,{base64_str}"}
+                            }
+                        ]
                     }
                 ]
-                messages_to_send = [HumanMessage(content=formatted_content)]
                 
-                active_agent = self.light_agent 
+                try:
+                    global vision_llm_direct
+                    response = vision_llm_direct.invoke(formatted_messages)
+                    raw_content = response.content
+                except Exception as vision_err:
+                    print(f"⚠️ Direct Vision Model Error: {vision_err}")
+                    raw_content = "عذراً، حدث خطأ أثناء تحليل الصورة المباشر."
+
             else:
                 route_decision = _route_message(message)
                 active_agent = self.heavy_agent if "HEAVY" in route_decision else self.light_agent
@@ -659,18 +677,18 @@ class ChatConsumer(WebsocketConsumer):
                 formatted_user_message = f"[User Memory Context Profile]: {user_facts}\n{file_hint}[Current Active User Query]: {message}"
                 messages_to_send = [("user", formatted_user_message)]
 
-            try:
-                response = active_agent.invoke({"messages": messages_to_send}, config=self.config)
-                raw_content = response["messages"][-1].content
-            except Exception as agent_err:
-                print(f"⚠️ Circuit breaker triggered: Diverting to fallback model... {agent_err}")
-                if image_row and is_asking_about_image:
-                    response = vision_llm_direct.invoke(messages_to_send)
-                    raw_content = response.content
-                else:
+                try:
+                    response = active_agent.invoke({"messages": messages_to_send}, config=self.config)
+                    raw_content = response["messages"][-1].content
+                except Exception as agent_err:
+                    print(f"⚠️ Circuit breaker triggered: Diverting to fallback model... {agent_err}")
+                    global light_1_deepseek
                     response = light_1_deepseek.invoke(messages_to_send)
                     raw_content = response.content
 
+            # ==========================================
+            # معالجة وتنظيف الرد النهائي للحفظ والإرسال
+            # ==========================================
             if isinstance(raw_content, str):
                 bot_reply = raw_content
             elif isinstance(raw_content, list):
@@ -686,6 +704,7 @@ class ChatConsumer(WebsocketConsumer):
             ).start()
 
         except Exception as e:
+            print(f"Fatal error in processing: {e}")
             bot_reply = "An error occurred with the network connection." if is_english else "عذراً يا غالي، يبدو أن هناك مشكلة اتصال عامة بالشبكة."
 
         self.send(text_data=json.dumps({"reply": bot_reply}))
