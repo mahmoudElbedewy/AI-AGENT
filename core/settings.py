@@ -31,6 +31,7 @@ ALLOWED_HOSTS = ['*']
 CSRF_TRUSTED_ORIGINS = [
     'https://*.hf.space',
     'https://huggingface.co',
+    'https://mahmoudelbedewy-ai-assistant.hf.space',
 ]
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
