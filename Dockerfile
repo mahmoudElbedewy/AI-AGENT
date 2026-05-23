@@ -22,4 +22,4 @@ EXPOSE 7860
 
 CMD python manage.py migrate && \
     python manage.py createsuperuser --noinput || true && \
-    daphne -b 0.0.0.0 -p 7860 core.asgi:application
+    python -m daphne -b 0.0.0.0 -p 7860 core.asgi:application
