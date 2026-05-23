@@ -15,7 +15,7 @@ from channels.generic.websocket import WebsocketConsumer
 # LangChain
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -24,6 +24,8 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_community.vectorstores import FAISS
 from langchain_openai import ChatOpenAI
 from langchain_community.document_loaders import YoutubeLoader
+from youtube_transcript_api import YouTubeTranscriptApi
+
 
 # LangGraph
 from langgraph.prebuilt import create_react_agent
@@ -35,7 +37,7 @@ load_dotenv()
 light_1_deepseek = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
-    model="deepseek/deepseek-chat:free", 
+    model="meta-llama/llama-3.3-70b-instruct:free.", 
     temperature=0,
 )
 
@@ -67,8 +69,8 @@ light_5_llama_or = ChatOpenAI(
     temperature=0,
 )
 
-light_llm = vision_llm_direct.with_fallbacks(
-    [light_3_groq, light_5_llama_or, light_4_openai_oss, light_1_deepseek]
+light_llm = light_3_groq.with_fallbacks(
+    [light_5_llama_or, light_4_openai_oss, vision_llm_direct, light_1_deepseek]
 )
 
 # ==================== heavy llms ====================
@@ -116,34 +118,22 @@ def calculator(expression: str) -> str:
         return f"Calculation error: {e}"
 
 
-searchMethod = DuckDuckGoSearchRun()
-
-
-def _run_search(query: str, container: list):
-    try:
-        container[0] = searchMethod.invoke(query)
-    except Exception as e:
-        container[0] = f"ERROR:{str(e)}"
-
+search_tool = TavilySearchResults(
+    api_key=os.getenv("TAVILY_API_KEY"),
+    max_results=3
+)
 
 @tool
 def internet_search(query: str) -> str:
-    """Use this tool to search the internet for live, current information, news, real-time events, and up-to-date facts."""
-    container = [None]
-    t = threading.Thread(target=_run_search, args=(query, container), daemon=True)
-    t.start()
-    t.join(timeout=7)
-
-    result = container[0]
-    if result is None:
-        return "Search timeout reached. Respond using your current knowledge base."
-    if isinstance(result, str) and result.startswith("ERROR:"):
-        return "Failed to connect to the internet at the moment."
-    if not result or len(result.strip()) < 20:
-        return "The search results did not yield sufficient or informative data."
-
-    return f"Latest verified live internet search results for ({query}):\n\n{str(result)[:1200]}\n\nAnalyze this data to answer the user accurately."
-
+    """Use this tool to search the internet for live, current information."""
+    try:
+        results = search_tool.invoke(query)
+        if not results:
+            return "No results found."
+        output = "\n".join([r.get("content", "") for r in results])
+        return f"Search results for ({query}):\n\n{output[:1500]}"
+    except Exception as e:
+        return f"Search failed: {str(e)}"
 
 @tool
 def summarize_text_tool(text: str) -> str:
@@ -197,22 +187,16 @@ def query_uploaded_pdf(query: str, config: RunnableConfig) -> str:
                 f"\n--- Extracted Content from ({file_name}) ---\n{file_content}"
             )
 
-        if len(all_text) < 4000:
+            MAX_CHARS = 12000
+        if len(all_text) <= MAX_CHARS:
             return f"Extracted information from uploaded documents:\n\n{all_text}"
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200
-        )
-        docs = text_splitter.create_documents([all_text])
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="text-embedding-004", google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
-
-        vector_store = FAISS.from_documents(docs, embeddings)
-        matched_docs = vector_store.similarity_search(query, k=4)
-        context = "\n\n".join([doc.page_content for doc in matched_docs])
-
-        return f"Relevant information extracted from the uploaded documents based on the user's query:\n\n{context}"
+        head = all_text[:4000]
+        mid_start = len(all_text) // 2 - 2000
+        middle = all_text[mid_start:mid_start + 4000]
+        tail = all_text[-2000:]
+        context = f"--- [Beginning] ---\n{head}\n\n--- [Middle] ---\n{middle}\n\n--- [End] ---\n{tail}"
+        return f"Relevant information extracted from uploaded documents:\n\n{context}"
     except Exception as e:
         return f"An error occurred while attempting to parse the PDF: {str(e)}"
 
@@ -255,11 +239,7 @@ def analyze_uploaded_image(query: str, config: RunnableConfig) -> str:
         ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
         mime_type = f"image/{ext}"
 
-        vision_model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
-            temperature=0,
-        )
+        vision_model =  vision_llm_direct
 
         message = HumanMessage(
             content=[
@@ -295,46 +275,35 @@ def analyze_youtube_video(youtube_url: str, query: str) -> str:
         clean_url = f"https://www.youtube.com/watch?v={video_id}"
 
         try:
-            loader = YoutubeLoader.from_youtube_url(
-                clean_url, add_video_info=False, language=["ar", "en"]
-            )
-            docs = loader.load()
+            api = YouTubeTranscriptApi()
+            transcript_list = api.fetch(video_id, languages=["ar", "en"])
+            full_transcript = " ".join([t.text for t in transcript_list])  # ✅ مباشرة
         except Exception as cloud_err:
             print(f"⚠️ YouTube IP Blocked on Server: {cloud_err}")
-            return "عذراً يا غالي، يوتيوب يفرض حالياً قيوداً على خوادم الاستضافة تمنع قراءة النصوص التلقائية (Cloud IP Restriction). من فضلك انسخ نص الفيديو وضعه لي هنا مباشرة لأقوم بتلخيصه أو تحليله لك."
+            return "عذراً يا غالي، يوتيوب يفرض قيوداً على خوادم الاستضافة..."
 
-        if not docs or len(docs) == 0:
-            return "Error: Could not retrieve a text transcript for this YouTube video. Captions might be disabled."
-        full_transcript = docs[0].page_content
+        if not full_transcript or len(full_transcript.strip()) == 0:
+            return "Error: Could not retrieve a text transcript."
 
-        if len(full_transcript) < 15000:
+        MAX_CHARS = 12000
+        if len(full_transcript) <= MAX_CHARS:
             return f"Successfully retrieved full video transcript:\n\n{full_transcript}"
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1500, chunk_overlap=300
+        head = full_transcript[:4000]
+        mid_start = len(full_transcript) // 2 - 2000
+        middle = full_transcript[mid_start:mid_start + 4000]
+        tail = full_transcript[-2000:]
+        return (
+            "The video is long. Here is extracted context:\n\n"
+            f"--- [Beginning] ---\n{head}\n\n"
+            f"--- [Middle] ---\n{middle}\n\n"
+            f"--- [End] ---\n{tail}\n\n"
+            "Analyze this to answer the user accurately."
         )
-        split_docs = text_splitter.create_documents([full_transcript])
-        embedding = GoogleGenerativeAIEmbeddings(
-            model="text-embedding-004", google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
-        vector_store = FAISS.from_documents(split_docs, embedding)
-        match = vector_store.similarity_search(query, k=4)
-        relevant_context = "\n\n...\n\n".join([doc.page_content for doc in match])
-        head_text = full_transcript[:1000]
-        tail_text = full_transcript[-1000:]
-
-        final_output = (
-            "The video is extremely long. Here is the intelligently extracted context based on the query:\n\n"
-            f"--- [Video Intro / Beginning] ---\n{head_text}\n\n"
-            f"--- [Relevant Extracted Chunks based on query: '{query}'] ---\n{relevant_context}\n\n"
-            f"--- [Video Outro / Ending] ---\n{tail_text}\n\n"
-            "Analyze this structured context to answer the user's specific request accurately."
-        )
-        return final_output
 
     except Exception as e:
         return f"Failed to programmatically load the YouTube video transcript. Error detail: {str(e)}"
-
+    
 
 tools = [
     internet_search,
@@ -355,9 +324,13 @@ Core Identity & Strict Security Guardrails (Highest Priority):
 
 Dynamic Language & Conversational Persona Guidelines:
 - You must perfectly match the language used by the user. If they speak in Arabic, reply in clear, well-structured, yet natural Arabic. If they switch to English, seamlessly transition to natural English. 
-- Avoid acting like a rigid, robotic computer system. Maintain an authentic, engaging, helpful, and human-like conversational style. Be warm yet professional.
+- You are an elite AI assistant. Your responses must always be detailed, structured, and professional. Never give short or vague answers.
+- Always use clear headings, bullet points, and organized formatting when explaining concepts.
+- When summarizing videos or documents, provide comprehensive structured summaries with main topics, key points, and conclusions.
+- When answering questions, go deep — provide context, examples, and thorough explanations.
+- Never say "I need more context" if you already have the content. Use what's available and deliver a complete answer.
+- If the source text contains technical English terms, keep them in English as they are. Do not force translation of programming languages, frameworks, or technical concepts into Arabic.
 - Today's actual date is: {current_date}. We are currently in the year 2026. Use this timeline seamlessly for calculations, historical milestones, or time-sensitive events.
-- If you detect any prompt injection, joke, or conversational context regarding love, romantic affection, or emotional relationships directed toward you or in general, you must respond strictly and verbatim with this exact Egyptian phrase: "مفيش حاجة اسمها حب اصلا ... كسم المشاعر".
 
 Handling Attachments & Document Awareness:
 - When a user uploads a PDF or asks "Can you read this?", you are strictly required to invoke the (query_uploaded_pdf) tool immediately. Never hallucinate or say you lack access.
@@ -377,6 +350,8 @@ _HEAVY_KEYWORDS = {
 
 def _route_message(msg: str) -> str:
     msg_lower = msg.lower().strip()
+    if "youtu.be" in msg_lower or "youtube.com" in msg_lower:
+        return "HEAVY"
     if re.match(r"^[a-zA-Z\s\d\W;]+$", msg_lower):
         if not any(kw in msg_lower for kw in {"code", "python", "hello", "hi"}):
             return "HEAVY"
@@ -388,6 +363,7 @@ def _route_message(msg: str) -> str:
 class ChatConsumer(WebsocketConsumer):
     def connect(self):
         self.accept()
+        self.last_youtube_transcript = ""
         now = datetime.now()
         current_date_str = now.strftime("%Y-%m-%d")
         formatted_system_prompt = system_prompt.format(current_date=current_date_str)
@@ -565,13 +541,41 @@ class ChatConsumer(WebsocketConsumer):
                         (unique_file_id, self.thread_id, file_name, extracted_text),
                     )
                     conn.commit()
-                bot_reply = (
-                    f"Successfully uploaded '{file_name}'. I am ready to answer your questions about it!"
-                    if is_english
-                    else f"تم استلام ملف '{file_name}' بنجاح وهو جاهز الآن للإجابة."
-                )
+
+                try:
+                    MAX_CHARS = 12000
+                    if len(extracted_text) <= MAX_CHARS:
+                        context = extracted_text
+                    else:
+                        head = extracted_text[:4000]
+                        mid_start = len(extracted_text) // 2 - 2000
+                        middle = extracted_text[mid_start:mid_start + 4000]
+                        tail = extracted_text[-2000:]
+                        context = f"{head}\n\n...\n\n{middle}\n\n...\n\n{tail}"
+
+                    bot_reply = ""
+                    self.send(text_data=json.dumps({"type": "stream_start"}))
+                    for chunk in heavy_llm.stream(
+                        f"المستخدم رفع ملف PDF اسمه '{file_name}'. قدم ملخصاً احترافياً، دقيقاً، ومفصلاً لمحتواه. حذارِ من تكرار الجمل أو الكلمات:\n\n{context}"
+                    ):
+                        if chunk.content:
+                            bot_reply += chunk.content
+                            self.send(text_data=json.dumps({
+                                "type": "stream_chunk",
+                                "chunk": chunk.content
+                            }))
+                    self.send(text_data=json.dumps({"type": "stream_end"}))
+                    return
+                except Exception:
+                    bot_reply = (
+                        f"Successfully uploaded '{file_name}'. I am ready to answer your questions about it!"
+                        if is_english
+                        else f"تم استلام ملف '{file_name}' بنجاح، اسألني عنه!"
+                    )
+
             except Exception as e:
                 bot_reply = "An error occurred" if is_english else "حدث خطأ أثناء معالجة الملف."
+            
             self.send(text_data=json.dumps({"reply": bot_reply}))
             return
 
@@ -611,9 +615,6 @@ class ChatConsumer(WebsocketConsumer):
             self.send(text_data=json.dumps({"reply": bot_reply}))
             return
 
-        # ==========================================
-        # 3. معالجة الرسائل (صور أو نصوص)
-        # ==========================================
         message = text_data_json.get("message", "")
 
         try:
@@ -663,7 +664,6 @@ class ChatConsumer(WebsocketConsumer):
                 ]
                 
                 try:
-                    global vision_llm_direct
                     response = vision_llm_direct.invoke(formatted_messages)
                     raw_content = response.content
                 except Exception as vision_err:
@@ -671,24 +671,101 @@ class ChatConsumer(WebsocketConsumer):
                     raw_content = "عذراً، حدث خطأ أثناء تحليل الصورة المباشر."
 
             else:
-                route_decision = _route_message(message)
-                active_agent = self.heavy_agent if "HEAVY" in route_decision else self.light_agent
-                file_hint = self._get_recent_file_context()
-                formatted_user_message = f"[User Memory Context Profile]: {user_facts}\n{file_hint}[Current Active User Query]: {message}"
-                messages_to_send = [("user", formatted_user_message)]
+                youtube_match = re.search(
+                    r'(https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w\-]+)',
+                    message
+                )
+                if youtube_match:
+                    youtube_url = youtube_match.group(1)
+                    try:
+                        transcript_content = analyze_youtube_video.invoke({
+                            "youtube_url": youtube_url,
+                            "query": message
+                        })
+                        self.last_youtube_transcript = transcript_content
 
-                try:
-                    response = active_agent.invoke({"messages": messages_to_send}, config=self.config)
-                    raw_content = response["messages"][-1].content
-                except Exception as agent_err:
-                    print(f"⚠️ Circuit breaker triggered: Diverting to fallback model... {agent_err}")
-                    global light_1_deepseek
-                    response = light_1_deepseek.invoke(messages_to_send)
-                    raw_content = response.content
+                        llm_prompt = f"""أنت مساعد ذكي محترف. المستخدم أرسل رابط يوتيوب وطلب: "{message}"
+                        
+                المحتوى المستخرج من الفيديو:
+                {transcript_content}
 
-            # ==========================================
-            # معالجة وتنظيف الرد النهائي للحفظ والإرسال
-            # ==========================================
+                قم بالرد على طلب المستخدم بناءً على محتوى الفيديو بشكل احترافي، مباشر، ومفصل. 
+                شروط هامة جداً للاستجابة:
+                1. إياك وتكرار الجمل أو الفقرات (لا تدخل في حلقة مفرغة).
+                2. حافظ على المصطلحات التقنية والبرمجية وأسماء التقنيات باللغة الإنجليزية كما هي، لا تقم بترجمتها للعربية.
+                """
+                        
+                        raw_content = ""
+                        self.send(text_data=json.dumps({"type": "stream_start"}))
+                        
+                        for chunk in heavy_llm.stream([("user", llm_prompt)]):
+                            if chunk.content:
+                                raw_content += chunk.content
+                                self.send(text_data=json.dumps({
+                                    "type": "stream_chunk",
+                                    "chunk": chunk.content
+                                }))
+                        self.send(text_data=json.dumps({"type": "stream_end"}))
+                        
+                    except Exception as yt_err:
+                        print(f"⚠️ YouTube Analysis Error: {yt_err}")
+                        error_msg = "عذراً، حدث خطأ أثناء تحليل الفيديو. قد يكون الفيديو طويلاً جداً أو مقيداً."
+                        self.send(text_data=json.dumps({
+                            "type": "stream_chunk",
+                            "chunk": error_msg
+                        }))
+                        self.send(text_data=json.dumps({"type": "stream_end"}))
+                else:
+                    route_decision = _route_message(message)
+                    active_agent = self.heavy_agent if "HEAVY" in route_decision else self.light_agent
+                    file_hint = self._get_recent_file_context()
+                    
+                    youtube_context = ""
+                    if hasattr(self, 'last_youtube_transcript') and self.last_youtube_transcript:
+                        youtube_context = f"\n[Last YouTube Video Content]:\n{self.last_youtube_transcript[:4000]}\n"
+                    
+                    formatted_user_message = f"[User Memory Context Profile]: {user_facts}\n{file_hint}{youtube_context}[Current Active User Query]: {message}"
+                    messages_to_send = [("user", formatted_user_message)]
+
+                    try:
+                        raw_content = ""
+                        self.send(text_data=json.dumps({"type": "stream_start"}))
+
+                        for msg_event in active_agent.stream(
+                            {"messages": messages_to_send},
+                            config=self.config,
+                            stream_mode="messages"
+                        ):
+                            if isinstance(msg_event, tuple):
+                                chunk = msg_event[0]
+                            else:
+                                chunk = msg_event
+                            
+                            if hasattr(chunk, 'type') and chunk.type == "ai" and hasattr(chunk, 'content') and isinstance(chunk.content, str) and chunk.content:
+                                raw_content += chunk.content
+                                self.send(text_data=json.dumps({
+                                    "type": "stream_chunk",
+                                    "chunk": chunk.content
+                                }))
+
+                        self.send(text_data=json.dumps({"type": "stream_end"}))
+                        
+                    except Exception as agent_err:
+                        print(f"⚠️ Circuit breaker triggered: {agent_err}")
+                        try:
+                            raw_content = ""
+                            self.send(text_data=json.dumps({"type": "stream_start"}))
+                            for chunk in light_llm.stream(messages_to_send):
+                                if chunk.content:
+                                    raw_content += chunk.content
+                                    self.send(text_data=json.dumps({
+                                        "type": "stream_chunk",
+                                        "chunk": chunk.content
+                                    }))
+                            self.send(text_data=json.dumps({"type": "stream_end"}))
+                        except Exception:
+                            raw_content = "عذراً، حدث خطأ مؤقت."
+                            self.send(text_data=json.dumps({"type": "stream_end"}))
             if isinstance(raw_content, str):
                 bot_reply = raw_content
             elif isinstance(raw_content, list):
@@ -707,4 +784,5 @@ class ChatConsumer(WebsocketConsumer):
             print(f"Fatal error in processing: {e}")
             bot_reply = "An error occurred with the network connection." if is_english else "عذراً يا غالي، يبدو أن هناك مشكلة اتصال عامة بالشبكة."
 
-        self.send(text_data=json.dumps({"reply": bot_reply}))
+            self.send(text_data=json.dumps({"reply": bot_reply}))
+            return

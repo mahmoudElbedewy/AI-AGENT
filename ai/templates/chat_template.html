@@ -398,8 +398,10 @@
     //  State
     // ================================================================
     let typingRow   = null;
-    let pendingFile = null;   // { name, type('pdf'|'image'), b64, objectURL }
-    let queuedText  = null;   // text to auto-send after file ACK
+    let pendingFile = null; 
+    let queuedText  = null; 
+    let currentBotBubble = null;  
+    let streamBuffer = "";   
 
 const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
 const chatSocket = new WebSocket(ws_scheme + '://' + window.location.host + '/ws/chat/');
@@ -407,40 +409,82 @@ const chatSocket = new WebSocket(ws_scheme + '://' + window.location.host + '/ws
     chatSocket.onclose = () => appendBotMessage('❌ انقطع الاتصال. جرب تعيد تحميل الصفحة.');
 
     chatSocket.onmessage = function(e) {
-        const data = JSON.parse(e.data);
+    const data = JSON.parse(e.data);
 
+    // ---- History ----
     if (data.type === "history") {
-    if (data.messages.length > 0) {
-        hideWelcome();
-        data.messages.forEach(msg => {
-            if (msg.role === "bot") {
-                appendBotMessage(msg.message);
-            } else if (msg.role === "user") {
-                appendUserText(msg.message);  
-            }
-        });
-        scrollBottom();
+        if (data.messages.length > 0) {
+            hideWelcome();
+            data.messages.forEach(msg => {
+                if (msg.role === "bot") appendBotMessage(msg.message);
+                else appendUserText(msg.message);
+            });
+            scrollBottom();
+        }
+        return;
     }
-    return;
-}
 
-        // Replace typing row with reply
+    if (data.type === "stream_start") {
         if (typingRow) { typingRow.remove(); typingRow = null; }
-        appendBotMessage(data.reply);
+        streamBuffer = "";
+        
+        const row = document.createElement('div');
+        row.className = 'msg-row bot';
+        
+        const av = document.createElement('div');
+        av.className = 'bot-avatar';
+        av.innerHTML = `<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>`;
+        
+        currentBotBubble = document.createElement('div');
+        currentBotBubble.className = 'msg-bubble';
+        
+        row.appendChild(av);
+        row.appendChild(currentBotBubble);
+        messagesDiv.appendChild(row);
+        scrollBottom();
+        return;
+    }
 
-        // If file+text was sent together → auto-send the queued text now
+    if (data.type === "stream_chunk") {
+        streamBuffer += data.chunk;
+        currentBotBubble.innerHTML = marked.parse(streamBuffer);
+        scrollBottom();
+        return;
+    }
+
+    if (data.type === "stream_end") {
+        currentBotBubble = null;
+        streamBuffer = "";
+        
         if (queuedText !== null) {
             const txt = queuedText;
             queuedText = null;
             setTimeout(() => {
-                chatSocket.send(JSON.stringify({ message: txt }));   // ⚠️ unchanged
+                chatSocket.send(JSON.stringify({ message: txt }));
                 typingRow = appendTyping();
                 sendBtn.disabled = true;
             }, 100);
         } else {
             sendBtn.disabled = false;
         }
-    };
+        return;
+    }
+
+    if (typingRow) { typingRow.remove(); typingRow = null; }
+    appendBotMessage(data.reply);
+
+    if (queuedText !== null) {
+        const txt = queuedText;
+        queuedText = null;
+        setTimeout(() => {
+            chatSocket.send(JSON.stringify({ message: txt }));
+            typingRow = appendTyping();
+            sendBtn.disabled = true;
+        }, 100);
+    } else {
+        sendBtn.disabled = false;
+    }
+};
 
     // ================================================================
     //  Attach
@@ -520,9 +564,6 @@ const chatSocket = new WebSocket(ws_scheme + '://' + window.location.host + '/ws
 
         hideWelcome();
 
-        // ── CASE 1: File + Text ───────────────────────────────────────
-        // عرض الملف والرسالة في الشات مباشرة (الرسالة تحت الملف)
-        // إرسال الملف للباك → بعد الـ ACK → إرسال النص تلقائياً
         if (hasFile && hasText) {
             const f = pendingFile;
 
@@ -537,7 +578,6 @@ const chatSocket = new WebSocket(ws_scheme + '://' + window.location.host + '/ws
             messageInput.style.height = 'auto';
             clearPending();
 
-            queuedText = text;  // هيتبعت تلقائياً بعد ACK الملف
 
             // ⚠️  payloads unchanged
             if (f.type === 'pdf') {
