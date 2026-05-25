@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تسجيل الدخول - مساعد الذكاء الاصطناعي</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0d0d0f;
+            color: #f0f0f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .login-card {
+            background: #1a1a1f;
+            padding: 30px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            width: 100%;
+            max-width: 380px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+        }
+        .login-card h2 { text-align: center; margin-bottom: 25px; font-size: 22px; color: #f0f0f5; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; color: #9898a8; font-size: 14px; }
+        .form-group input {
+            width: 100%; padding: 12px; background: #0d0d0f; border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px; font-size: 15px; color: #f0f0f5; outline: none; transition: border-color 0.2s;
+        }
+        .form-group input:focus { border-color: #f55036; }
+        .login-btn {
+            width: 100%; padding: 12px; background-color: #f55036; color: white; border: none;
+            border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: opacity 0.2s;
+        }
+        .login-btn:hover { opacity: 0.9; }
+        .error-msg { color: #f55036; font-size: 13px; text-align: center; margin-bottom: 15px; display: none; }
+        
+        /* التنسيقات الجديدة الخاصة برابط التسجيل */
+        .register-link { text-align: center; margin-top: 20px; font-size: 14px; color: #9898a8; }
+        .register-link a { color: #f55036; text-decoration: none; font-weight: bold; transition: 0.2s; }
+        .register-link a:hover { text-decoration: underline; color: #d43d25; }
+    </style>
+</head>
+<body>
+
+    <div class="login-card">
+        <h2>تسجيل الدخول</h2>
+        <div class="error-msg" id="error-box"></div>
+        <form id="login-form">
+            <div class="form-group">
+                <label for="username">اسم المستخدم</label>
+                <input type="text" id="username" required placeholder="اكتب اسم المستخدم">
+            </div>
+            <div class="form-group">
+                <label for="password">كلمة المرور</label>
+                <input type="password" id="password" required placeholder="اكتب كلمة المرور">
+            </div>
+            <button type="submit" class="login-btn">دخول</button>
+        </form>
+
+        <div class="register-link">
+            <p>ليس لديك حساب؟ <a href="/register/">إنشاء حساب جديد</a></p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorBox = document.getElementById('error-box');
+            
+            errorBox.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/login/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    localStorage.setItem('access_token', data.access_token);
+                    localStorage.setItem('user_data', JSON.stringify(data.user_data));
+                    window.location.href = '/';
+                } else {
+                    errorBox.textContent = data.error || 'فشل تسجيل الدخول';
+                    errorBox.style.display = 'block';
+                }
+            } catch (err) {
+                errorBox.textContent = 'مشكلة في الاتصال بالسيرفر';
+                errorBox.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
