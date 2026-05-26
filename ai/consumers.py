@@ -39,20 +39,24 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 load_dotenv()
 
 # ====================== LLMS ======================
-light_1_deepseek = ChatOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    model="meta-llama/llama-3.3-70b-instruct:free", 
-    temperature=0,
-)
 
+# --- Vision / Multimodal ---
 vision_llm_direct = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0,
+    temperature=0,      # للتحليل والـ tools: دقيق
     max_retries=1,
 )
 
+# نسخة Gemini بشخصية للـ simple_chat
+vision_llm_chat = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0.7,    # للشات: شخصية وطبيعية
+    max_retries=1,
+)
+
+# --- Light LLMs (للـ repair والـ fallback الخفيف) ---
 light_3_groq = ChatGroq(
     api_key=os.getenv("GROQ_API_KEY_1"),
     model="llama-3.1-8b-instant",
@@ -74,11 +78,13 @@ light_5_llama_or = ChatOpenAI(
     temperature=0,
 )
 
+# light_llm: للـ repair + circuit breaker fallback
+# groq (سريع) → llama OR → gemma OR → gemini
 light_llm = light_3_groq.with_fallbacks(
-    [light_5_llama_or, light_4_openai_oss, vision_llm_direct, light_1_deepseek]
+    [light_5_llama_or, light_4_openai_oss, vision_llm_direct]
 )
 
-# ==================== heavy llms ====================
+# --- Heavy LLMs (للـ agent والـ tools) ---
 heavy_1_gemma = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -96,7 +102,7 @@ heavy_2_groq = ChatGroq(
 heavy_3_gemini_pro = ChatGoogleGenerativeAI(
     model="gemini-2.5-pro",
     google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=1.0,
+    temperature=0,
     max_retries=1,
 )
 
@@ -106,6 +112,7 @@ heavy_4_openai_oss = ChatOpenAI(
     model="google/gemini-2.0-flash-exp:free",
     temperature=0,
 )
+
 heavy_deepseek = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -113,9 +120,43 @@ heavy_deepseek = ChatOpenAI(
     temperature=0,
 )
 
+# heavy_llm: للـ agent + tools + summaries (دقيق)
+# groq versatile → gemma → deepseek → gemini-flash → gemini-pro
 heavy_llm = heavy_2_groq.with_fallbacks(
     [heavy_1_gemma, heavy_deepseek, heavy_4_openai_oss, heavy_3_gemini_pro]
 )
+
+# --- Simple Chat LLM (للشات الطبيعي بدون agent) ---
+# gemini-flash (شخصية) → deepseek chat → groq → gemma → gemini-pro
+_deepseek_chat = ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="deepseek/deepseek-v4-flash:free",
+    temperature=0.7,
+)
+
+_groq_chat = ChatGroq(
+    api_key=os.getenv("GROQ_API_KEY_1"),
+    model="llama-3.1-8b-instant",
+    temperature=0.7,
+    max_retries=1,
+)
+
+_gemma_chat = ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="google/gemma-4-31b-it:free",
+    temperature=0.7,
+)
+
+# simple_chat_llm: الأولوية لـ Gemini Flash (أحسن شخصية) ثم DeepSeek ثم Groq ثم Gemma
+simple_chat_llm = vision_llm_chat.with_fallbacks(
+    [_deepseek_chat, _groq_chat, _gemma_chat]
+)
+
+# للتوافق مع الكود القديم
+heavy_deepseek_chat = _deepseek_chat
+light_1_deepseek = light_5_llama_or  # كان نفس المودل (llama-3.3-70b) - alias فقط
 
 # ====================== Tools ======================
 
@@ -162,6 +203,7 @@ def summarize_text_tool(text: str) -> str:
 @tool
 def query_uploaded_pdf(query: str, config: RunnableConfig) -> str:
     """Mandatory and exclusive tool to use whenever the user asks any question regarding uploaded PDF documents, requests summaries of them, or asks if you can see the file."""
+    """استخدم هذه الأداة للبحث عن معلومات داخل ملف الـ PDF الذي قام المستخدم برفعه مؤخراً."""
     try:
         thread_id = config["configurable"].get("thread_id")
         print(f"🔍 [PDF Tool]: Fetching attachments for session: {thread_id}")
@@ -437,11 +479,7 @@ def _route_message(msg: str) -> str:
     msg_lower = msg.lower().strip()
     if "youtu.be" in msg_lower or "youtube.com" in msg_lower:
         return "HEAVY"
-    if re.search(r"[\u0600-\u06FF]", msg_lower):
-        return "HEAVY"
-    if re.match(r"^[a-zA-Z\s\d\W;]+$", msg_lower):
-        if not any(kw in msg_lower for kw in {"code", "python", "hello", "hi"}):
-            return "HEAVY"
+    # حُذف: if re.search(r"[\u0600-\u06FF]"...) → كان بيحول كل عربي لـ HEAVY حتى "مرحبا"
     if any(kw in msg_lower for kw in _HEAVY_KEYWORDS):
         return "HEAVY"
     return "LIGHT"
@@ -507,40 +545,6 @@ def _normalize_arabic_query(text: str) -> str:
     return text
 
 
-def _is_capability_question(message: str) -> bool:
-    normalized = _normalize_arabic_query(message)
-    compact = re.sub(r"\s+", "", normalized)
-    english = str(message or "").lower()
-    arabic_hits = (
-        "بتعرفتعمل" in compact
-        or "تعرفتعمل" in compact
-        or "تقدرتعمل" in compact
-        or "تعمل اي" in normalized
-        or "تعمل ايه" in normalized
-        or "اي قدراتك" in normalized
-        or "كايجنت" in compact
-        or "كذكاء" in compact
-        or "كمساعد" in compact
-    )
-    english_hits = any(phrase in english for phrase in (
-        "what can you do", "what do you do", "as an agent", "as ai", "as an ai"
-    ))
-    return arabic_hits or english_hits
-
-
-def _capability_reply() -> str:
-    return """أيوه يا صاحبي، اعتبرني AI agent معاك في الشات. أقدر أساعدك في حاجات كتير، زي:
-
-- أظبطلك كود وأشرح errors في Python, Django, JavaScript, SQL, APIs.
-- أقرأ PDF أو CV وأجاوبك من الملف نفسه.
-- أحلل screenshots أو صور وتقولّي عايز تفهم إيه فيها.
-- ألخص YouTube links أو مقالات أو notes.
-- أعملك خطة مذاكرة، roadmap، أفكار مشاريع، أو أرتبلك يومك.
-- أساعدك تكتب emails، prompts، بوستات، رسائل، أو تحسن CV و LinkedIn.
-- أبحثلك عن معلومات حديثة من الإنترنت لما الموضوع محتاج تحديث.
-
-كلمني عادي جدًا: "اشرحلي ده"، "ظبط الكود"، "اقرأ الملف"، "اعمللي خطة"، وأنا أمشي معاك خطوة خطوة."""
-
 def _is_pdf_related_question(message: str) -> bool:
     normalized = _normalize_arabic_query(message)
     compact = re.sub(r"\s+", "", normalized)
@@ -561,49 +565,95 @@ def _is_pdf_related_question(message: str) -> bool:
     return arabic_hits or compact_hits or english_hits
 
 def _needs_live_search(message: str) -> bool:
+    if not message:
+        return False
+        
+    # تنظيف النص وتوحيد الحروف (تشمل تحويل ئ -> ي)
     normalized = _normalize_arabic_query(message)
+    english = str(message).lower()
+    
+    # 1. التوقيتات والألفاظ الدالة على اللحظية (Time-Sensitive)
+    time_keywords = {
+        "دلوقتي", "حاليا", "الان", "الآن", "النهاردة", "النهارده", "اليوم", "بكرة", "بكره", "امبارح", "إمبارح",
+        "السنة", "الشهر", "الاسبوع", "سنة", "عام", "تحديث", "مباشر", "لايف", "اخر", "أخر", "احدث", "أحدث",
+        "جديد", "الجديد", "مؤخرا", "مؤخراً", "الايام", "الأيام", "دلوتني"
+    }
+    
+    # 2. الاقتصاد، العملات، والأسعار (Finance & Prices)
+    finance_keywords = {
+        "سعر", "اسعار", "أسعار", "دولار", "جنيه", "جنية", "يورو", "ريال", "دينار", "دهب", "الدهب", "الذهب", 
+        "فضة", "بورصة", "بورصه", "سهم", "أسهم", "اسهم", "عملة", "عمله", "تضخم", "بيتكوين", "كريبتو", "crypto", "bitcoin"
+    }
+    
+    # 3. الأخبار، السياسة، والشخصيات القيادية (News & Current Figures)
+    news_politics_keywords = {
+        "خبر", "اخبار", "أخبار", "حدث", "احداث", "عاجل", "رئيس", "رييس", "الرئيس", "الرييس", "وزير", "الوزير", 
+        "ملك", "الملك", "حاكم", "الحاكم", "محافظ", "سفير", "مؤتمر", "معرض", "انتخابات", "ثورة", "حرب", "هدنة",
+        "رئيس الوزراء", "رييس الوزراء", "الرئيس الحالي", "الرييس الحالي", "مدير", "المدير", "توقعات"
+    }
+    
+    # 4. الرياضة، المباريات، والنتائج (Sports & Scores)
+    sports_keywords = {
+        "مباراة", "مباراه", "ماتش", "ماتشات", "كورة", "كوره", "الدوري", "الدورى", "كأس", "كاس", "بطولة", "بطوله",
+        "الاهلي", "الأهلي", "الزمالك", "برشلونة", "برشلونه", "مدريد", "نتيجة", "النتيجة", "نتيجه", "النتيجه", 
+        "ترتيب", "كسب", "فاز", "خسر", "يلعب", "هيلعب", "لعب", "هداف", "شامبيونز", "ليفربول", "الرباح", "الخسران"
+    }
+    
+    # 5. الطقس والمناخ (Weather)
+    weather_keywords = {
+        "طقس", "الطقس", "جو", "الجو", "حرارة", "الحرارة", "حراره", "الحراره", "مطر", "امطار", "أمطار", "عاصفة", "أرصاد", "ارصاد"
+    }
+    
+    # 6. الفن، الترندات، والترفيه الحالي (Trends & Media)
+    entertainment_keywords = {
+        "ترند", "تريند", "فيلم", "مسلسل", "أغنية", "اغنية", "اغنيه", "ألبوم", "البوم", "سينما", "نازل", "نازل جديد"
+    }
+    
+    # دمج كل الكلمات المفتاحية في شبكة فحص واحدة عملاقة
+    all_live_keywords = (
+        time_keywords | finance_keywords | news_politics_keywords | 
+        sports_keywords | weather_keywords | entertainment_keywords
+    )
+    
+    # الفحص الأول: تقسيم النص لـ Tokens والفحص المباشر (سريع ودقيق)
+    message_tokens = set(re.findall(r"[\w\u0600-\u06FF]+", normalized))
+    if any(token in all_live_keywords for token in message_tokens):
+        return True
+        
+    # الفحص الثاني: فحص الكلمات الملزوقة (Substrings) زي "سعرالدولار" أو "رييسامريكا"
     compact = re.sub(r"\s+", "", normalized)
-    english = str(message or "").lower()
-
-    arabic_live_terms = (
-        "حاليا", "دلوقتي", "الان", "النهارده", "اليوم", "اخر", "احدث",
-        "اخبار", "سعر", "اسعار", "نتيجه", "نتيجة", "مباشر"
-    )
-    arabic_position_terms = (
-        "رئيس", "الرئيس", "ملك", "الملك", "وزير", "الوزير", "حاكم", "الحاكم",
-        "رئيس الوزراء", "محافظ", "الرئيس الحالي"
-    )
-    arabic_question_terms = ("مين", "من", "من هو", "من هي", "ايه", "ما هو", "ما هي")
-
-    has_position_question = any(q in normalized for q in arabic_question_terms) and any(
-        term in normalized for term in arabic_position_terms
-    )
-    has_explicit_live = any(term in normalized for term in arabic_live_terms)
-    has_common_president_query = any(term in compact for term in (
-        "مينرئيس", "منرئيس", "رئيسمصر", "رئيسامريكا", "رئيسالولاياتالمتحده",
-        "الرئيسالحالي", "رئيسفرنسا", "رئيسروسيا"
-    ))
-
-    english_live = any(term in english for term in (
-        "current", "today", "latest", "news", "price", "score", "now", "live"
-    ))
-    english_position = any(term in english for term in (
-        "president", "prime minister", "king", "minister", "governor", "ceo", "champion"
-    ))
-    english_question = any(term in english for term in ("who", "what", "which"))
-
-    return has_common_president_query or has_position_question or (has_explicit_live and any(
-        term in normalized for term in arabic_position_terms
-    )) or (english_position and (english_question or english_live))
+    compact_keywords = {"سعر", "رييس", "اخبار", "أخبار", "ماتش", "مباراة", "دولار", "الدهب", "الذهب", "طقس", "ترند", "كام"}
+    if any(kw in compact for kw in compact_keywords):
+        return True
+        
+    # 7. الكلمات الإنجليزية الشاملة للأمور الحية والمتغيرة (English Temporal Indicators)
+    english_live_patterns = {
+        "current", "today", "yesterday", "tomorrow", "now", "latest", "live", "update", "updates",
+        "price", "prices", "stock", "stocks", "weather", "match", "matches", "score", "scores",
+        "standings", "league", "president", "minister", "ceo", "gold", "currency", "dollar",
+        "bitcoin", "crypto", "trend", "trending", "news", "recent", "recently", "who is", "what is"
+    }
+    if any(kw in english for kw in english_live_patterns):
+        return True
+        
+    # الفحص الثالث: لو المستخدم كاتب سنة معينة قريبة (دلالة على طلب معلومات محدثة)
+    if any(year in english for year in ["2024", "2025", "2026", "2027"]):
+        return True
+        
+    return False
 
 
 def _search_query_for_user_message(message: str) -> str:
     normalized = _normalize_arabic_query(message)
     compact = re.sub(r"\s+", "", normalized)
-    if "رئيسامريكا" in compact or "رئيسالولاياتالمتحده" in compact:
-        return "current president of the United States official"
-    if "رئيسمصر" in compact:
-        return "الرئيس الحالي لجمهورية مصر العربية الموقع الرسمي"
+    
+    # تم تصليح البج: بنقارن بـ "رييس" المنورملة مش "رئيس"
+    if "رييسامريكا" in compact or "رييسالولاياتالمتحده" in compact:
+        return "current president of the United States 2026"
+    if "رييسمصر" in compact:
+        return "الرئيس الحالي لجمهورية مصر العربية 2026"
+        
+    # لو مفيش صيغة مخصصة، بنباصي رسالة المستخدم زي ما هي لأن محركات البحث الحديثة ذكية كفاية
     return str(message or "").strip()
 
 
@@ -811,6 +861,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         now = datetime.now()
         current_date_str = now.strftime("%Y-%m-%d")
         formatted_system_prompt = system_prompt.format(current_date=current_date_str)
+        self.formatted_system_prompt = formatted_system_prompt  # محتاجينه في simple_chat
 
         self.db = "db.sqlite3"
         self.conn = sqlite3.connect(self.db, check_same_thread=False)
@@ -977,6 +1028,7 @@ Clean final answer:
 
     async def _answer_with_live_search(self, message: str) -> str:
         query = _search_query_for_user_message(message)
+        print(f"🔍 [LIVE SEARCH] query='{query}'")
         try:
             search_output = await asyncio.to_thread(internet_search.invoke, {"query": query})
         except Exception as first_err:
@@ -986,32 +1038,38 @@ Clean final answer:
                 print(f"Live search failed: {first_err} / {second_err}")
                 return "مش هفتي عليك يا صاحبي. حاولت أتحقق من المعلومة الحالية بس البحث فشل عندي مؤقتًا. جرّب تاني بعد لحظات أو ابعتلي صياغة أدق وأنا أتحقق لك."
 
-        answer_prompt = f"""أنت مساعد شخصي عالمي وودود. جاوب المستخدم من نتائج البحث فقط.
+        print(f"📋 [SEARCH RESULT preview]: {str(search_output)[:300]}")
 
-قواعد مهمة:
-- جاوب بنفس لغة المستخدم ولهجته. لو عربي مصري، خليك طبيعي وودود.
-- ابدأ بالإجابة المباشرة، ثم أضف سياقًا قصيرًا مفيدًا.
-- لا تقل "لا أعرف" طالما نتائج البحث فيها معلومة كافية.
-- لو نتائج البحث غير كافية أو متضاربة، قل بوضوح إنك لم تجد تأكيدًا كافيًا.
-- حافظ على أسماء الأشخاص والدول والمصطلحات كما هي.
-- لا تعرض تحليل داخلي.
+        answer_prompt = f"""أنت مساعد ذكي وودود. جاوب المستخدم بناءً على نتائج البحث المرفقة فقط.
+        
+⚠️ تذكير زمني هام جداً: نحن الآن في عام 2026.
+
+⚠️ مهم جداً:
+- اعتمد فقط على نتائج البحث المرفقة، وليس على معرفتك السابقة...
+- لو نتائج البحث قالت X، قل X حتى لو معرفتك القديمة تقول غيره.
+- المعلومات القديمة في ذاكرتك قد تكون منتهية الصلاحية — نتائج البحث هي المرجع.
+- جاوب بنفس لغة المستخدم ولهجته، وكن مباشراً وطبيعياً.
+- ابدأ بالإجابة مباشرة بدون مقدمات.
 
 سؤال المستخدم:
 {message}
 
-نتائج البحث:
+نتائج البحث (المصدر الوحيد للإجابة):
 {search_output}
 
 الإجابة:"""
-        raw_content = ""
-        async for text in stream_llm_async(heavy_llm, answer_prompt):
-            raw_content += text
+        # invoke بدل stream عشان fallback chain يشتغل صح
+        try:
+            response = await asyncio.to_thread(heavy_llm.invoke, answer_prompt)
+            raw_content = response.content if hasattr(response, "content") else str(response)
+            print(f"✅ [LIVE SEARCH ANSWER preview]: {raw_content[:200]}")
+        except Exception as llm_err:
+            print(f"❌ [LIVE SEARCH LLM ERROR]: {llm_err}")
+            raw_content = ""
         return await self._prepare_bot_reply(raw_content, message)
     @database_sync_to_async
     def update_user_memories(self, new_messages_text):
         try:
-            if not str(new_messages_text or "").startswith("User uploaded PDF:"):
-                return
 
             with sqlite3.connect(self.db, timeout=30) as conn:
                 cursor = conn.cursor()
@@ -1227,14 +1285,6 @@ Clean final answer:
         message = text_data_json.get("message", "")
         await self.save_chat_message("user", message)
 
-        if _is_capability_question(message):
-            bot_reply = _capability_reply()
-            await self.send(text_data=json.dumps({"type": "stream_start"}))
-            await self._send_text_chunks(bot_reply)
-            await self.send(text_data=json.dumps({"type": "stream_end"}))
-            await self.save_chat_message("bot", bot_reply)
-            return
-
         if _needs_live_search(message):
             await self.send(text_data=json.dumps({"type": "stream_start"}))
             bot_reply = await self._answer_with_live_search(message)
@@ -1243,22 +1293,22 @@ Clean final answer:
             await self.save_chat_message("bot", bot_reply)
             return
 
-        latest_pdf = self._get_latest_pdf_payload()
-        if latest_pdf and (_is_pdf_related_question(message) or _is_summary_request(message)):
-            file_name, pdf_text = latest_pdf
-            await self.send(text_data=json.dumps({"type": "stream_start"}))
-            bot_reply = await asyncio.to_thread(
-                _answer_pdf_question_sync,
-                pdf_text,
-                file_name,
-                message,
-            )
-            bot_reply = await self._prepare_bot_reply(bot_reply, message)
-            await self._send_text_chunks(bot_reply)
-            await self.send(text_data=json.dumps({"type": "stream_end"}))
-            await self.save_chat_message("bot", bot_reply)
-            await self.update_user_memories(f"User uploaded PDF: {file_name}\nBot Summary: {bot_reply}")
-            return
+        # latest_pdf = self._get_latest_pdf_payload()
+        # if latest_pdf and (_is_pdf_related_question(message) or _is_summary_request(message)):
+        #     file_name, pdf_text = latest_pdf
+        #     await self.send(text_data=json.dumps({"type": "stream_start"}))
+        #     bot_reply = await asyncio.to_thread(
+        #         _answer_pdf_question_sync,
+        #         pdf_text,
+        #         file_name,
+        #         message,
+        #     )
+        #     bot_reply = await self._prepare_bot_reply(bot_reply, message)
+        #     await self._send_text_chunks(bot_reply)
+        #     await self.send(text_data=json.dumps({"type": "stream_end"}))
+        #     await self.save_chat_message("bot", bot_reply)
+        #     await self.update_user_memories(f"User uploaded PDF: {file_name}\nBot Summary: {bot_reply}")
+        #     return
 
         try:
             with sqlite3.connect(self.db, timeout=30) as conn:
@@ -1361,25 +1411,85 @@ Clean final answer:
                         }))
                         await self.send(text_data=json.dumps({"type": "stream_end"}))
                 else:
-                    route_decision = _route_message(message)
-                    active_agent = self.heavy_agent if "HEAVY" in route_decision else self.light_agent
+                    # تحديد هل الرسالة محتاجة tools أو مجرد شات عادي
+                    is_about_file = _is_pdf_related_question(message) or _is_summary_request(message)
+
+                    needs_tools = any([
+                        _needs_live_search(message),
+                        is_about_file,
+                        "youtube.com" in message.lower(),
+                        "youtu.be" in message.lower(),
+                    ])
+
                     file_hint = self._get_recent_file_context()
-                    
                     youtube_context = ""
                     if hasattr(self, 'last_youtube_transcript') and self.last_youtube_transcript:
                         youtube_context = f"\n[Last YouTube Video Content]:\n{self.last_youtube_transcript[:4000]}\n"
-                    
-                    formatted_user_message = f"""PRIVATE CONTEXT FOR ASSISTANT ONLY - do not mention or describe this context to the user.
-Use recent file/video context only when the user's message is clearly about it.
-Do not infer the user's intent from old memory. Do not assume a topic from previous messages.
 
-Recent file/video context:
-{file_hint}{youtube_context}
+                    # file_hint يدخل فقط لو السؤال عن الملف فعلاً
+                    inject_file = file_hint.strip() and is_about_file
 
-USER MESSAGE:
-{message}
+                    simple_chat = not needs_tools
 
-Reply directly to USER MESSAGE in the user's natural language and tone. Do not translate the message, do not expose analysis, and do not mention this private context unless the user explicitly asks about memory/files."""
+                    # ── Casual Chat Mode: مباشرة على LLM بدون agent ──
+                    if simple_chat:
+                        print(f"🟢 [SIMPLE CHAT MODE] message='{message[:50]}'")
+                        try:
+                            from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+                            await self.send(text_data=json.dumps({"type": "stream_start"}))
+                            raw_content = ""
+
+                            # جيب آخر 6 رسائل من الـ history عشان يفهم السياق
+                            history = await self.load_chat_history()
+                            recent = history[-6:] if len(history) > 6 else history
+
+                            # جهز الـ System Prompt وحط معاه سياق الملف المرفوع مؤخراً لو موجود!
+                            recent_file = self._get_recent_file_context()
+                            full_system_prompt = self.formatted_system_prompt
+                            if recent_file.strip():
+                                full_system_prompt += f"\n\n[CONTEXT OF UPLOADED FILES]:\n{recent_file}"
+
+                            chat_messages = [SystemMessage(content=full_system_prompt)]
+                            
+                            for h in recent:
+                                if h["role"] == "user":
+                                    chat_messages.append(HumanMessage(content=h["message"]))
+                                elif h["role"] == "bot":
+                                    chat_messages.append(AIMessage(content=h["message"]))
+                                    
+                            chat_messages.append(HumanMessage(content=message))
+
+                            # التشغيل والاستماع للـ Stream
+                            async for text in stream_llm_async(simple_chat_llm, chat_messages):
+                                raw_content += text
+                                
+                            print(f"✅ simple_chat OK, len={len(raw_content)}")
+                            bot_reply = await self._prepare_bot_reply(raw_content, message)
+                            await self._send_text_chunks(bot_reply)
+                            await self.send(text_data=json.dumps({"type": "stream_end"}))
+                            
+                            # ⚠️ مهم جداً: احفظ رد البوت في قاعدة البيانات فوراً عشان يفتكره المرة الجاية!
+                            await self.save_chat_message("bot", bot_reply)
+                            return
+                            
+                        except Exception as e:
+                            print(f"❌ Simple chat failed completely: {e}")
+                            # fallback للـ agent
+
+                                        # ── Agent Mode: للحاجات المحتاجة tools ──
+                    route_decision = _route_message(message)
+                    active_agent = self.heavy_agent if "HEAVY" in route_decision else self.light_agent
+
+                    # formatted_user_message: بسيط لو السؤال مش عن ملف، ومع context لو عن ملف/فيديو
+                    if inject_file or youtube_context:
+                        formatted_user_message = f"""PRIVATE CONTEXT (لا تذكره للمستخدم):
+                    {file_hint if inject_file else ""}{youtube_context}
+
+                    رسالة المستخدم:
+                    {message}"""
+                    else:
+                        formatted_user_message = message
+
                     messages_to_send = [("user", formatted_user_message)]
 
                     try:
