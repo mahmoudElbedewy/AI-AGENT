@@ -337,6 +337,7 @@
         color: var(--text-primary);
         padding: 4px 0;
         max-width: calc(100% - 38px);
+        overflow-x: auto;
       }
 
       /* Markdown */
@@ -359,6 +360,43 @@
       .msg-row.bot .msg-bubble h3 {
         margin: 14px 0 8px;
         font-weight: 700;
+      }
+      .msg-row.bot .msg-bubble table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        margin: 14px 0;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg-surface);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+        direction: rtl;
+      }
+      .msg-row.bot .msg-bubble thead th {
+        background: var(--accent-soft);
+        color: var(--text-primary);
+        font-weight: 700;
+        border-bottom: 1px solid rgba(245, 80, 54, 0.22);
+      }
+      .msg-row.bot .msg-bubble th,
+      .msg-row.bot .msg-bubble td {
+        padding: 10px 12px;
+        text-align: right;
+        vertical-align: top;
+        border-bottom: 1px solid var(--border);
+        border-left: 1px solid var(--border);
+        min-width: 120px;
+      }
+      .msg-row.bot .msg-bubble th:last-child,
+      .msg-row.bot .msg-bubble td:last-child {
+        border-left: none;
+      }
+      .msg-row.bot .msg-bubble tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .msg-row.bot .msg-bubble tbody tr:hover {
+        background: rgba(255, 255, 255, 0.035);
       }
       .msg-row.bot .msg-bubble code {
         font-family: monospace;
@@ -940,6 +978,11 @@
       </div>
     </div>
     <script>
+      marked.setOptions({
+        gfm: true,
+        breaks: true,
+      });
+
       // ================================================================
       //  DOM refs
       // ================================================================
@@ -1068,6 +1111,15 @@
           streamBuffer += data.chunk;
           currentBotBubble.innerHTML = marked.parse(streamBuffer);
           scrollBottom();
+          return;
+        }
+
+        if (data.type === "stream_replace") {
+          streamBuffer = data.text || "";
+          if (currentBotBubble) {
+            currentBotBubble.innerHTML = marked.parse(streamBuffer);
+            scrollBottom();
+          }
           return;
         }
 
@@ -1215,6 +1267,7 @@
                 type: "file",
                 file_name: f.name,
                 file_data: f.b64,
+                message: text,
               })
             );
           } else {
@@ -1223,6 +1276,7 @@
                 type: "image",
                 file_name: f.name,
                 file_data: f.b64,
+                message: text,
               })
             );
           }
