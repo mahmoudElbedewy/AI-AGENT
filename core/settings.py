@@ -128,3 +128,6 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 ASGI_APPLICATION = 'core.asgi.application'
+MEDIA_URL = '/media/'
+
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

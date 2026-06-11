@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import threading
 from sympy import sympify
 import re
+import aiohttp
+from urllib.parse import quote
 from urllib.parse import parse_qs
 from rest_framework_simplejwt.tokens import AccessToken
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -29,13 +31,18 @@ from RestrictedPython import compile_restricted, safe_builtins, PrintCollector
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from typing import Annotated, TypedDict, Literal
-
+from docx import Document as WordDocument
+from docx.shared import Pt, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import aiosqlite
 
 load_dotenv()
+_pending_file_downloads: dict[str, list] = {}
 
 vision_llm_direct = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
@@ -139,6 +146,7 @@ _gemma_chat = ChatOpenAI(
 simple_chat_llm = vision_llm_chat.with_fallbacks(
     [_deepseek_chat, _groq_chat, _gemma_chat]
 )
+vision_llm = vision_llm_direct.with_fallbacks([heavy_4_openai_oss])
 
 search_tool = TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=3)
 
@@ -309,7 +317,7 @@ def analyze_uploaded_image(query: str, config: RunnableConfig) -> str:
         ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
         mime_type = f"image/{ext}"
 
-        vision_model = vision_llm_direct
+        vision_model = vision_llm
 
         message = HumanMessage(
             content=[
@@ -368,6 +376,283 @@ def analyze_youtube_video(youtube_url: str, query: str) -> str:
         return f"Failed to programmatically load the YouTube video transcript. Error detail: {str(e)}"
 
 
+@tool
+def create_word_doc(filename: str, content: str, config: RunnableConfig) -> str:
+    """
+    Creates a formatted Microsoft Word (.docx) file for the user to download.
+
+    Use this when the user asks to: create a Word document, write a report,
+    draft a letter, make a CV/resume, or produce any formatted document.
+
+    Args:
+        filename: File name ending in .docx  (e.g. 'report.docx').
+        content:  The document content using these markers:
+                  # Title        → big bold title (centered)
+                  ## Heading     → section heading
+                  ### SubHeading → sub-section heading
+                  **text**       → bold text
+                  - item         → bullet list item
+                  | col1 | col2  → table row (first row = header)
+                  plain text     → normal paragraph
+    """
+    thread_id = config["configurable"].get("thread_id", "default")
+    try:
+        doc = WordDocument()
+
+        section = doc.sections[0]
+        section.left_margin = Inches(1)
+        section.right_margin = Inches(1)
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+
+        def set_rtl(para):
+            from docx.oxml.ns import qn
+            from docx.oxml import OxmlElement
+
+            pPr = para._p.get_or_add_pPr()
+            bidi = OxmlElement("w:bidi")
+            pPr.insert(0, bidi)
+
+        lines = content.split("\n")
+        table_rows = []
+
+        def flush_table():
+            if not table_rows:
+                return
+            col_count = max(len(r) for r in table_rows)
+            tbl = doc.add_table(rows=0, cols=col_count)
+            tbl.style = "Table Grid"
+            for i, row_cells in enumerate(table_rows):
+                row = tbl.add_row()
+                for j, cell_text in enumerate(row_cells):
+                    c = row.cells[j]
+                    c.text = cell_text.strip()
+                    run = (
+                        c.paragraphs[0].runs[0]
+                        if c.paragraphs[0].runs
+                        else c.paragraphs[0].add_run(cell_text.strip())
+                    )
+                    if i == 0:  # header row
+                        run.bold = True
+                        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                        c._tc.get_or_add_tcPr()
+                        from docx.oxml import OxmlElement
+
+                        shd = OxmlElement("w:shd")
+                        shd.set(
+                            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val",
+                            "clear",
+                        )
+                        shd.set(
+                            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}color",
+                            "auto",
+                        )
+                        shd.set(
+                            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}fill",
+                            "2E75B6",
+                        )
+                        c._tc.get_or_add_tcPr().append(shd)
+            table_rows.clear()
+
+        for line in lines:
+            stripped = line.strip()
+
+            if stripped.startswith("|") and "|" in stripped[1:]:
+                if stripped.replace("|", "").replace("-", "").replace(" ", "") == "":
+                    continue
+                cells = [c for c in stripped.split("|") if c.strip() != ""]
+                table_rows.append(cells)
+                continue
+            else:
+                flush_table()
+
+            if not stripped:
+                doc.add_paragraph()
+                continue
+
+            if stripped.startswith("# "):
+                p = doc.add_heading(stripped[2:].strip(), level=0)
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            elif stripped.startswith("## "):
+                doc.add_heading(stripped[3:].strip(), level=1)
+            elif stripped.startswith("### "):
+                doc.add_heading(stripped[4:].strip(), level=2)
+            elif stripped.startswith("- ") or stripped.startswith("* "):
+                p = doc.add_paragraph(stripped[2:].strip(), style="List Bullet")
+                set_rtl(p)
+            else:
+                p = doc.add_paragraph()
+                set_rtl(p)
+                parts = stripped.split("**")
+                for idx, part in enumerate(parts):
+                    run = p.add_run(part)
+                    run.bold = idx % 2 == 1
+                    run.font.size = Pt(12)
+
+        flush_table()
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        file_b64 = __import__("base64").b64encode(buf.getvalue()).decode()
+
+        if thread_id not in _pending_file_downloads:
+            _pending_file_downloads[thread_id] = []
+        _pending_file_downloads[thread_id].append(
+            {
+                "name": filename if filename.endswith(".docx") else filename + ".docx",
+                "data": file_b64,
+                "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+        )
+        return f" تم إنشاء ملف Word '{filename}' بنجاح وجاهز للتنزيل."
+
+    except Exception as e:
+        return f" حدث خطأ أثناء إنشاء الملف: {str(e)}"
+
+
+@tool
+def create_excel_file(filename: str, content: str, config: RunnableConfig) -> str:
+    """
+    Creates a formatted Microsoft Excel (.xlsx) file for the user to download.
+
+    Use this when the user asks to: create an Excel sheet, make a spreadsheet,
+    build a table with data, generate a budget/schedule/tracker, or export data to Excel.
+
+    Args:
+        filename: File name ending in .xlsx  (e.g. 'budget.xlsx').
+        content:  Data in this format:
+                  SHEET: SheetName        → starts a new sheet (optional)
+                  col1 | col2 | col3      → first such row = header, rest = data rows
+                  OR plain CSV rows:  val1, val2, val3
+    """
+    thread_id = config["configurable"].get("thread_id", "default")
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+
+        header_font = Font(bold=True, color="FFFFFF", name="Arial", size=11)
+        header_fill = PatternFill("solid", fgColor="2E75B6")
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell_align = Alignment(horizontal="right", vertical="center")
+        thin = Side(style="thin", color="CCCCCC")
+        cell_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        row_num = 1
+        header_written = False
+        current_ws = ws
+
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if stripped.upper().startswith("SHEET:"):
+                sheet_name = stripped[6:].strip() or f"Sheet{len(wb.sheetnames) + 1}"
+                current_ws = wb.create_sheet(title=sheet_name)
+                row_num = 1
+                header_written = False
+                continue
+
+            if "|" in stripped:
+                cells = [c.strip() for c in stripped.split("|") if c.strip()]
+            else:
+                cells = [c.strip() for c in stripped.split(",")]
+
+            if not cells:
+                continue
+
+            converted = []
+            for v in cells:
+                try:
+                    converted.append(int(v))
+                except ValueError:
+                    try:
+                        converted.append(float(v))
+                    except ValueError:
+                        converted.append(v)
+
+            for col_num, value in enumerate(converted, start=1):
+                cell = current_ws.cell(row=row_num, column=col_num, value=value)
+                cell.border = cell_border
+                cell.alignment = header_align if not header_written else cell_align
+                if not header_written:
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    current_ws.row_dimensions[row_num].height = 25
+
+            if not header_written:
+                header_written = True
+            row_num += 1
+
+        for sheet in wb.worksheets:
+            for col in sheet.columns:
+                max_len = max((len(str(c.value or "")) for c in col), default=8)
+                sheet.column_dimensions[col[0].column_letter].width = min(
+                    max_len + 4, 40
+                )
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        file_b64 = __import__("base64").b64encode(buf.getvalue()).decode()
+
+        if thread_id not in _pending_file_downloads:
+            _pending_file_downloads[thread_id] = []
+        _pending_file_downloads[thread_id].append(
+            {
+                "name": filename if filename.endswith(".xlsx") else filename + ".xlsx",
+                "data": file_b64,
+                "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            }
+        )
+        return f" تم إنشاء ملف Excel '{filename}' بنجاح وجاهز للتنزيل."
+
+    except Exception as e:
+        return f" حدث خطأ أثناء إنشاء الملف: {str(e)}"
+
+
+@tool
+def generate_image(prompt: str, config: RunnableConfig) -> str:
+    """
+    Generates an AI image from a text description.
+    Use when user asks to draw, create, design, or generate an image.
+    Always translate the prompt to detailed English before passing it here.
+    """
+    import requests
+    from urllib.parse import quote
+
+    thread_id = config["configurable"].get("thread_id", "default")
+    clean_prompt = prompt.strip()
+
+    try:
+        encoded = quote(clean_prompt)
+        url = (
+            f"https://image.pollinations.ai/prompt/{encoded}"
+            f"?width=1024&height=1024&nologo=true&enhance=true&model=flux"
+        )
+        resp = requests.get(url, timeout=90)
+
+        if resp.status_code == 200 and resp.content:
+            img_b64 = base64.b64encode(resp.content).decode()
+            if thread_id not in _pending_file_downloads:
+                _pending_file_downloads[thread_id] = []
+            _pending_file_downloads[thread_id].append(
+                {
+                    "name": "generated_image.png",
+                    "data": img_b64,
+                    "mime": "image/png",
+                    "is_generated_image": True,
+                }
+            )
+            return f" تم إنشاء الصورة بنجاح! البرومبت المستخدم: {clean_prompt}"
+        return f" فشل إنشاء الصورة (status {resp.status_code})، جرّب مرة ثانية."
+
+    except requests.Timeout:
+        return " انتهى وقت الاتصال، جرّب مرة ثانية."
+    except Exception as e:
+        return f" خطأ في إنشاء الصورة: {str(e)}"
+
+
 research_tools = [
     internet_search,
     query_uploaded_pdf,
@@ -379,6 +664,9 @@ research_tools = [
 code_tools = [
     execute_python_code,
     calculator,
+    create_word_doc,
+    create_excel_file,
+    generate_image,
 ]
 
 tools = research_tools + code_tools
@@ -615,11 +903,23 @@ Use for images, screenshots, visual analysis, and image-based questions.
 
 analyze_youtube_video
 
+generate_image
+
+You CAN actually generate real images. Use this tool whenever the user asks you to draw, design, create, generate, or make an image/picture/drawing — including indirect requests like "اعمل صورة كلب قاعد على شجرة", or when the user describes a visual idea (even after you offered to draw it) and confirms they want it.
+Never claim you cannot generate images — you can, via this tool. Always call it instead of just describing the image in words.
+
+Never ignore a clearly necessary tool.
+
+
 Use for YouTube links and video summaries.
 
 Never ignore a clearly necessary tool.
 
 Never use tools unnecessarily.
+
+- Use create_word_doc  when the user asks for a Word document, report, letter, CV, or any formatted text document.
+- Use create_excel_file when the user asks for an Excel sheet, spreadsheet, table, budget, tracker, or data export.
+- When creating files: first think about the full content, THEN call the tool with complete well-structured data.
 
 ━━━━━━━━━━━━━━━━━━━━
 RESPONSE ENDINGS
@@ -667,10 +967,13 @@ Your ONLY job is to find information using the tools available to you.
 Always respond in the same language as the user."""
 
 code_agent_prompt = """You are a specialized code execution assistant.
-Your ONLY job is to help with calculations and running Python code.
+Your ONLY job is to help with calculations, running Python code, and creating files.
 - Use calculator for mathematical expressions.
 - Use execute_python_code to run Python code when the user asks.
-Always show the code and its output clearly.
+- Use create_word_doc when the user wants a Word document.
+- Use create_excel_file when the user wants an Excel spreadsheet.
+Always provide complete, detailed responses with no length restrictions.
+Never truncate or shorten your output.
 Respond in the same language as the user."""
 
 
@@ -697,7 +1000,7 @@ def build_multi_agent_graph(memory, formatted_system_prompt: str):
         messages = state["messages"]
         last_message = messages[-1].content if messages else ""
 
-        if _needs_code_execution(last_message):
+        if _needs_code_execution(last_message) or _needs_file_creation(last_message):
             return {"next_agent": "code"}
         elif any(
             [
@@ -739,7 +1042,7 @@ def build_multi_agent_graph(memory, formatted_system_prompt: str):
             {"messages": state["messages"]},
         )
         return {"messages": result["messages"]}
-    
+
     graph = StateGraph(SupervisorState)
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("research_agent", research_agent_node)
@@ -754,7 +1057,7 @@ def build_multi_agent_graph(memory, formatted_system_prompt: str):
             "research_agent": "research_agent",
             "code_agent": "code_agent",
             "general_agent": "general_agent",
-        }
+        },
     )
     graph.add_edge("research_agent", END)
     graph.add_edge("code_agent", END)
@@ -812,15 +1115,6 @@ _HEAVY_KEYWORDS = {
     "لينك",
     "link",
 }
-
-
-def _route_message(msg: str) -> str:
-    msg_lower = msg.lower().strip()
-    if "youtu.be" in msg_lower or "youtube.com" in msg_lower:
-        return "HEAVY"
-    if any(kw in msg_lower for kw in _HEAVY_KEYWORDS):
-        return "HEAVY"
-    return "LIGHT"
 
 
 async def stream_llm_async(llm, prompt):
@@ -964,6 +1258,147 @@ def _needs_code_execution(message: str) -> bool:
     has_trigger = any(t in normalized or t in english for t in triggers)
     has_code = any(c in normalized or c in english for c in code_words)
     return has_trigger and has_code
+
+
+def _needs_file_creation(message: str) -> bool:
+    normalized = _normalize_arabic_query(message)
+    english = message.lower()
+    triggers = [
+        "اعمل",
+        "اعملي",
+        "انشئ",
+        "انشئي",
+        "ابني",
+        "ابنيلي",
+        "اكتب",
+        "اكتبلي",
+        "جهز",
+        "جهزلي",
+        "عمل",
+        "عملي",
+        "صمم",
+        "صممي",
+        "حضر",
+        "حضرلي",
+        "create",
+        "make",
+        "generate",
+        "build",
+        "write",
+        "produce",
+    ]
+    file_types = [
+        "word",
+        "وورد",
+        "ورد",
+        "docx",
+        "excel",
+        "اكسل",
+        "اكسيل",
+        "xlsx",
+        "تقرير",
+        "ملف",
+        "جدول",
+        "جداول",
+        "سي في",
+        "cv",
+        "resume",
+        "سيرة ذاتية",
+        "خطة",
+        "بروبوزال",
+        "proposal",
+    ]
+    has_trigger = any(t in normalized or t in english for t in triggers)
+    has_filetype = any(f in normalized or f in english for f in file_types)
+    return has_trigger and has_filetype
+
+
+def _needs_image_generation(message: str) -> bool:
+    normalized = _normalize_arabic_query(message)
+    english = message.lower()
+    triggers = [
+        "ارسم",
+        "ارسملي",
+        "ارسم لي",
+        "صمم",
+        "صممي",
+        "اعمل صورة",
+        "اعمللي صورة",
+        "اعمل صوره",
+        "اعمللي صوره",
+        "ولد صورة",
+        "انشئ صورة",
+        "جيب صورة",
+        "صور لي",
+        "صورلي",
+        "generate image",
+        "create image",
+        "draw",
+        "make image",
+        "make a picture",
+        "generate a picture",
+        "create a picture",
+        "image of",
+        "picture of",
+        "illustrate",
+    ]
+    return any(t in normalized or t in english for t in triggers)
+
+
+def _is_image_generation_followup(message: str, last_bot_reply: str = "") -> bool:
+    """يلتقط ردود التأكيد/الوصف بعد ما البوت يكون عرض إنه يعمل صورة"""
+    normalized = _normalize_arabic_query(message)
+    english = message.lower()
+
+    confirm_words = [
+        "تمام",
+        "ايوه",
+        "ايوة",
+        "اه",
+        "أه",
+        "ok",
+        "اوك",
+        "yes",
+        "ممكن",
+        "عايز",
+        "عاوز",
+        "ابعتلك",
+        "هوصفلك",
+        "وصف",
+        "اوصف",
+        "هي عبارة",
+        "عبارة عن",
+        "اللي هو",
+        "يعني",
+    ]
+    image_words = [
+        "صورة",
+        "صوره",
+        "الصورة",
+        "الصوره",
+        "كلب",
+        "قط",
+        "شجرة",
+        "image",
+        "picture",
+    ]
+
+    last_normalized = _normalize_arabic_query(last_bot_reply)
+    bot_offered = (
+        "اوصف" in last_normalized
+        or "وصف" in last_normalized
+        or "اعملها" in last_normalized
+        or "تخيل" in last_normalized
+        or "صوره" in last_normalized
+        or "صورة" in last_normalized
+        or "image" in last_bot_reply.lower()
+        or "picture" in last_bot_reply.lower()
+    )
+
+    has_confirm = any(t in normalized or t in english for t in confirm_words)
+    has_image_ref = any(t in normalized or t in english for t in image_words)
+
+    return bot_offered and (has_confirm or has_image_ref)
 
 
 def _needs_live_search(message: str) -> bool:
@@ -1692,6 +2127,95 @@ class ChatConsumer(AsyncWebsocketConsumer):
             text_data=json.dumps({"type": "stream_chunk", "chunk": str(text)})
         )
 
+
+#============================
+
+
+
+
+    async def _handle_image_generation(self, message: str) -> str:
+        HF_TOKEN = os.getenv("HF_TOKEN")
+        try:
+            extraction_prompt = (
+                "Extract the image description from the user's request and translate it "
+                "into a detailed, vivid English prompt suitable for AI image generation. "
+                "Return ONLY the English prompt, no explanation.\n"
+                f"User request: {message}"
+            )
+            resp = await asyncio.to_thread(light_llm.invoke, extraction_prompt)
+            english_prompt = (
+                resp.content if hasattr(resp, "content") else str(resp)
+            ).strip()
+        except Exception:
+            english_prompt = message
+
+        await self._send_stream_chunk("🎨 بجهز الصورة دلوقتي...\n\n")
+
+        if not HF_TOKEN:
+            return "❌ مفتاح Hugging Face غير موجود. يرجى إضافة HF_TOKEN في ملف البيئة."
+
+        API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {"inputs": english_prompt}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    API_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=90),
+                ) as response:
+                    if response.status == 200:
+                        image_bytes = await response.read()
+                        img_b64 = base64.b64encode(image_bytes).decode()
+
+                        if self.thread_id not in _pending_file_downloads:
+                            _pending_file_downloads[self.thread_id] = []
+                        _pending_file_downloads[self.thread_id].append({
+                            "name": "generated_image.png",
+                            "data": img_b64,
+                            "mime": "image/png",
+                            "is_generated_image": True,
+                        })
+                        return f"✅ الصورة جاهزة! البرومبت: {english_prompt}"
+
+                    elif response.status == 503:
+                        return "⏳ النموذج بيستنى يشتغل، حاول تاني بعد دقيقة."
+                    else:
+                        error_text = await response.text()
+                        return f"❌ فشل إنشاء الصورة (HTTP {response.status}): {error_text[:200]}"
+
+        except asyncio.TimeoutError:
+            return "⏰ انتهى الوقت، جرّب مرة أخرى."
+        except Exception as e:
+            return f"❌ خطأ أثناء الاتصال بـ Hugging Face: {str(e)}"            #=======================================
+
+    async def _send_pending_files(self):
+        files = _pending_file_downloads.pop(self.thread_id, [])
+        for f in files:
+            if f.get("is_generated_image"):
+                await self.send(
+                    text_data=json.dumps(
+                        {
+                            "type": "generated_image",
+                            "image_data": f["data"],
+                            "mime_type": f["mime"],
+                        }
+                    )
+                )
+            else:
+                await self.send(
+                    text_data=json.dumps(
+                        {
+                            "type": "file_download",
+                            "file_name": f["name"],
+                            "file_data": f["data"],
+                            "mime_type": f["mime"],
+                        }
+                    )
+                )
+
     async def _replace_stream_text(self, text: str):
         await self.send(
             text_data=json.dumps({"type": "stream_replace", "text": str(text or "")})
@@ -1952,7 +2476,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 import pdf2image
 
                 images = pdf2image.convert_from_bytes(
-                    pdf_bytes, dpi=150 #, poppler_path=r"D:\poppler-26.02.0\Library\bin"
+                    pdf_bytes,
+                    dpi=150,  # , poppler_path=r"D:\poppler-26.02.0\Library\bin"
                 )
             except Exception as e:
                 print(f"️ pdf2image failed: {e}")
@@ -1995,7 +2520,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             },
                         ]
                     )
-                    response = vision_llm_direct.invoke([msg])
+                    response = vision_llm.invoke([msg])
                     page_content = (response.content or "").strip()
                     extracted_text += f"\n\n--- Page {i} ---\n{page_content}\n"
                     print(f" [Vision PDF] Page {i} — {len(page_content)} chars")
@@ -2132,7 +2657,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         ]
                     )
                     response = await asyncio.to_thread(
-                        vision_llm_direct.invoke, [image_prompt]
+                        vision_llm.invoke, [image_prompt]
                     )
                     bot_reply = (
                         response.content
@@ -2165,7 +2690,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         message = text_data_json.get("message", "")
         await self.save_chat_message("user", message)
 
-        if _needs_live_search(message):
+        if _needs_live_search(message) and not _needs_file_creation(message):
             await self.send(text_data=json.dumps({"type": "stream_start"}))
             bot_reply = await self._answer_with_live_search(message)
             await self._send_text_chunks(bot_reply)
@@ -2207,7 +2732,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "اشرح",
             }
             is_asking_about_image = any(kw in message.lower() for kw in image_keywords)
-
+            _chat_history_for_image = await self.load_chat_history()
+            _bot_messages = [
+                h for h in _chat_history_for_image if h["role"] == "bot"
+            ]
+            _last_bot_reply_for_image_check = (
+                _bot_messages[-1]["message"] if _bot_messages else ""
+            )
             if image_row and is_asking_about_image:
                 file_name, base64_str = image_row
                 if isinstance(base64_str, bytes):
@@ -2238,7 +2769,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
                 try:
                     response = await asyncio.to_thread(
-                        vision_llm_direct.invoke, formatted_messages
+                        vision_llm.invoke, formatted_messages
                     )
                     raw_content = response.content
                 except Exception as vision_err:
@@ -2249,7 +2780,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.send(text_data=json.dumps({"type": "stream_start"}))
                 await self._send_text_chunks(raw_content)
                 await self.send(text_data=json.dumps({"type": "stream_end"}))
-
             else:
                 youtube_match = re.search(
                     r"(https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w\-]+)",
@@ -2308,6 +2838,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     )
                     await self.save_chat_message("bot", raw_content)
                     return
+                elif _needs_image_generation(message) or _is_image_generation_followup(
+                    message, _last_bot_reply_for_image_check
+                ):
+                    await self.send(text_data=json.dumps({"type": "stream_start"}))
+                    raw_content = await self._handle_image_generation(message)
+                    await self._send_text_chunks(raw_content)
+                    await self.send(text_data=json.dumps({"type": "stream_end"}))
+                    await self._send_pending_files()
+                    await self.update_user_memories(
+                        f"User: {message}\nBot: {raw_content}"
+                    )
+                    await self.save_chat_message("bot", raw_content)
+                    return
                 else:
                     is_about_file = _is_pdf_related_question(
                         message
@@ -2316,6 +2859,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         [
                             _needs_live_search(message),
                             is_about_file,
+                            _needs_file_creation(message),
                             "youtube.com" in message.lower(),
                             "youtu.be" in message.lower(),
                         ]
@@ -2414,7 +2958,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         )
 
                         ai_messages = [
-                            m for m in result["messages"]
+                            m
+                            for m in result["messages"]
                             if hasattr(m, "type") and m.type == "ai"
                         ]
                         if ai_messages:
@@ -2427,23 +2972,32 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             await self._replace_stream_text(bot_reply)
                         raw_content = bot_reply
                         await self.send(text_data=json.dumps({"type": "stream_end"}))
+                        await self._send_pending_files()
 
                     except Exception as agent_err:
                         print(f"Multi-agent error: {agent_err}")
                         try:
                             raw_content = ""
-                            async for text in stream_llm_async(light_llm, messages_to_send):
+                            async for text in stream_llm_async(
+                                light_llm, messages_to_send
+                            ):
                                 raw_content += text
                                 await self._send_stream_chunk(text)
-                            bot_reply = await self._prepare_bot_reply(raw_content, message)
+                            bot_reply = await self._prepare_bot_reply(
+                                raw_content, message
+                            )
                             if bot_reply != raw_content:
                                 await self._replace_stream_text(bot_reply)
                             raw_content = bot_reply
-                            await self.send(text_data=json.dumps({"type": "stream_end"}))
+                            await self.send(
+                                text_data=json.dumps({"type": "stream_end"})
+                            )
                         except Exception:
                             raw_content = "عذراً، حدث خطأ مؤقت."
                             await self._send_text_chunks(raw_content)
-                            await self.send(text_data=json.dumps({"type": "stream_end"}))
+                            await self.send(
+                                text_data=json.dumps({"type": "stream_end"})
+                            )
             if isinstance(raw_content, str):
                 bot_reply = raw_content
             elif isinstance(raw_content, list):
