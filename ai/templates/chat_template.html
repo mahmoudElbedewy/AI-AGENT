@@ -1085,6 +1085,11 @@
                 <span class="cap-title">تحليل PDF</span>
                 <span class="cap-sub">اسأل عن أي ملف PDF</span>
               </div>
+              <div class="welcome-cap" onclick="fillPrompt('اعملي صورة لـ: ')">
+                <span class="cap-icon">🎨</span>
+                <span class="cap-title">توليد صور</span>
+                <span class="cap-sub">صور بالذكاء الاصطناعي</span>
+              </div>
 
               <div
                 class="welcome-cap"
@@ -1560,7 +1565,9 @@
             bubble.className = "msg-bubble";
 
             const img = document.createElement("img");
-            img.src = data.url;
+            img.src = `data:${data.mime_type || "image/png"};base64,${
+              data.image_data
+            }`;
             img.style.maxWidth = "100%";
             img.style.borderRadius = "12px";
             img.style.marginTop = "8px";
@@ -1575,7 +1582,7 @@
             promptTxt.style.fontVertical = "11px";
             promptTxt.style.color = "var(--text-secondary)";
             promptTxt.style.marginTop = "6px";
-            promptTxt.innerText = "🎨 الوصف: " + data.prompt;
+            promptTxt.innerText = "🎨 الصورة جاهزة";
 
             bubble.appendChild(img);
             bubble.appendChild(promptTxt);
@@ -1766,6 +1773,15 @@
       }
 
       function appendBotMessage(text) {
+        try {
+          const payload = JSON.parse(text);
+          if (payload?.type === "generated_image") {
+            if (payload.message) appendBotMessage(payload.message);
+            appendGeneratedImage(payload.image_data, payload.mime_type);
+            return null;
+          }
+        } catch (_) {}
+
         const row = document.createElement("div");
         row.className = "msg-row bot";
         const av = document.createElement("div");
@@ -1774,6 +1790,42 @@
         const bubble = document.createElement("div");
         bubble.className = "msg-bubble";
         bubble.innerHTML = marked.parse(text);
+        row.appendChild(av);
+        row.appendChild(bubble);
+        messagesDiv.appendChild(row);
+        scrollBottom();
+        return row;
+      }
+
+      function appendGeneratedImage(imageData, mimeType) {
+        if (!imageData) return null;
+        const row = document.createElement("div");
+        row.className = "msg-row bot";
+        const av = document.createElement("div");
+        av.className = "bot-av";
+        av.innerHTML = `<svg viewBox="0 0 24 24" fill="#0a0f0e"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`;
+        const bubble = document.createElement("div");
+        bubble.className = "msg-bubble";
+
+        const img = document.createElement("img");
+        img.src = `data:${mimeType || "image/png"};base64,${imageData}`;
+        img.style.maxWidth = "100%";
+        img.style.borderRadius = "12px";
+        img.style.marginTop = "8px";
+        img.style.cursor = "pointer";
+        img.onclick = () => {
+          lightboxImg.src = img.src;
+          lightbox.classList.add("open");
+        };
+
+        const promptTxt = document.createElement("p");
+        promptTxt.style.fontVertical = "11px";
+        promptTxt.style.color = "var(--text-secondary)";
+        promptTxt.style.marginTop = "6px";
+        promptTxt.innerText = "🎨 الصورة جاهزة";
+
+        bubble.appendChild(img);
+        bubble.appendChild(promptTxt);
         row.appendChild(av);
         row.appendChild(bubble);
         messagesDiv.appendChild(row);

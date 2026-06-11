@@ -44,6 +44,43 @@ import aiosqlite
 load_dotenv()
 _pending_file_downloads: dict[str, list] = {}
 
+
+def _queue_generated_image(
+    thread_id: str, image_bytes: bytes, mime_type: str = "image/png"
+) -> None:
+    img_b64 = base64.b64encode(image_bytes).decode()
+    if thread_id not in _pending_file_downloads:
+        _pending_file_downloads[thread_id] = []
+    _pending_file_downloads[thread_id].append(
+        {
+            "name": "generated_image.png",
+            "data": img_b64,
+            "mime": mime_type or "image/png",
+            "is_generated_image": True,
+        }
+    )
+
+
+def _extract_gemini_image(response_json: dict) -> tuple[bytes, str] | None:
+    for candidate in response_json.get("candidates", []):
+        content = candidate.get("content") or {}
+        for part in content.get("parts", []):
+            inline_data = part.get("inlineData") or part.get("inline_data")
+            if not inline_data:
+                continue
+            data = inline_data.get("data")
+            if not data:
+                continue
+            mime_type = inline_data.get("mimeType") or inline_data.get(
+                "mime_type", "image/png"
+            )
+            return base64.b64decode(data), mime_type
+    return None
+
+
+def _gemini_image_payload(prompt: str) -> dict:
+    return {"contents": [{"parts": [{"text": prompt}]}]}
+
 vision_llm_direct = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     google_api_key=os.getenv("GOOGLE_API_KEY"),
@@ -619,33 +656,182 @@ def generate_image(prompt: str, config: RunnableConfig) -> str:
     Always translate the prompt to detailed English before passing it here.
     """
     import requests
+    import time
     from urllib.parse import quote
 
     thread_id = config["configurable"].get("thread_id", "default")
     clean_prompt = prompt.strip()
+    image_model = os.getenv("POLLINATIONS_IMAGE_MODEL", "turbo")
+    gemini_api_key = os.getenv("GOOGLE_API_KEY")
+    gemini_image_model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+    hf_token = os.getenv("HF_TOKEN")
+    hf_image_model = os.getenv("HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell")
+    request_id = uuid.uuid4().hex[:8]
 
     try:
+        if hf_token:
+            try:
+                hf_url = (
+                    "https://router.huggingface.co/hf-inference/models/"
+                    f"{hf_image_model}"
+                )
+                print(
+                    f"[image-gen:{request_id}] tool hf start model={hf_image_model}",
+                    flush=True,
+                )
+                hf_resp = requests.post(
+                    hf_url,
+                    headers={
+                        "Authorization": f"Bearer {hf_token}",
+                        "Accept": "image/png",
+                    },
+                    json={
+                        "inputs": clean_prompt,
+                        "parameters": {
+                            "width": 768,
+                            "height": 768,
+                            "num_inference_steps": 4,
+                        },
+                    },
+                    timeout=120,
+                )
+                content_type = hf_resp.headers.get("Content-Type", "")
+                debug_body = "" if content_type.startswith("image/") else hf_resp.text[:500]
+                print(
+                    f"[image-gen:{request_id}] tool hf response status={hf_resp.status_code} "
+                    f"content_type={content_type!r} body={debug_body!r}",
+                    flush=True,
+                )
+                if hf_resp.status_code == 200 and content_type.startswith("image/"):
+                    _queue_generated_image(
+                        thread_id, hf_resp.content, content_type.split(";")[0]
+                    )
+                    return f" تم إنشاء الصورة بنجاح! البرومبت المستخدم: {clean_prompt}"
+            except Exception as hf_err:
+                print(
+                    f"[image-gen:{request_id}] tool hf error={hf_err}",
+                    flush=True,
+                )
+
+        if gemini_api_key:
+            try:
+                gemini_url = (
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"{gemini_image_model}:generateContent"
+                )
+                print(
+                    f"[image-gen:{request_id}] tool gemini start model={gemini_image_model}",
+                    flush=True,
+                )
+                gemini_resp = requests.post(
+                    gemini_url,
+                    headers={
+                        "x-goog-api-key": gemini_api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json=_gemini_image_payload(clean_prompt),
+                    timeout=120,
+                )
+                try:
+                    gemini_body = gemini_resp.json()
+                except Exception:
+                    gemini_body = {"raw": gemini_resp.text[:500]}
+                print(
+                    f"[image-gen:{request_id}] tool gemini response status={gemini_resp.status_code} "
+                    f"body={str(gemini_body)[:500]!r}",
+                    flush=True,
+                )
+                if gemini_resp.status_code == 200:
+                    gemini_image = _extract_gemini_image(gemini_body)
+                    if gemini_image:
+                        image_bytes, mime_type = gemini_image
+                        _queue_generated_image(thread_id, image_bytes, mime_type)
+                        return f" تم إنشاء الصورة بنجاح! البرومبت المستخدم: {clean_prompt}"
+            except Exception as gemini_err:
+                print(
+                    f"[image-gen:{request_id}] tool gemini error={gemini_err}",
+                    flush=True,
+                )
+
         encoded = quote(clean_prompt)
         url = (
             f"https://image.pollinations.ai/prompt/{encoded}"
-            f"?width=1024&height=1024&nologo=true&enhance=true&model=flux"
+            f"?width=768&height=768&model={image_model}&private=true"
         )
-        resp = requests.get(url, timeout=90)
+        print(
+            f"[image-gen:{request_id}] tool start model={image_model} prompt={clean_prompt!r} url={url}",
+            flush=True,
+        )
+        retry_delays = [0, 8]
+        last_status = None
+        for delay in retry_delays:
+            if delay:
+                time.sleep(delay)
 
-        if resp.status_code == 200 and resp.content:
-            img_b64 = base64.b64encode(resp.content).decode()
-            if thread_id not in _pending_file_downloads:
-                _pending_file_downloads[thread_id] = []
-            _pending_file_downloads[thread_id].append(
-                {
-                    "name": "generated_image.png",
-                    "data": img_b64,
-                    "mime": "image/png",
-                    "is_generated_image": True,
-                }
+            resp = requests.get(url, timeout=90)
+            last_status = resp.status_code
+            content_type = resp.headers.get("Content-Type", "")
+            debug_body = ""
+            if not content_type.startswith("image/"):
+                debug_body = resp.text[:500]
+            print(
+                f"[image-gen:{request_id}] tool response status={resp.status_code} "
+                f"content_type={content_type!r} body={debug_body!r}",
+                flush=True,
             )
-            return f" تم إنشاء الصورة بنجاح! البرومبت المستخدم: {clean_prompt}"
-        return f" فشل إنشاء الصورة (status {resp.status_code})، جرّب مرة ثانية."
+
+            if resp.status_code == 200 and resp.content and content_type.startswith("image/"):
+                img_b64 = base64.b64encode(resp.content).decode()
+                if thread_id not in _pending_file_downloads:
+                    _pending_file_downloads[thread_id] = []
+                _pending_file_downloads[thread_id].append(
+                    {
+                        "name": "generated_image.png",
+                        "data": img_b64,
+                        "mime": content_type.split(";")[0],
+                        "is_generated_image": True,
+                    }
+                )
+                return f" تم إنشاء الصورة بنجاح! البرومبت المستخدم: {clean_prompt}"
+
+            if resp.status_code not in (402, 429, 503):
+                break
+
+        if last_status in (402, 429, 503) and image_model != "turbo":
+            turbo_url = (
+                f"https://image.pollinations.ai/prompt/{encoded}"
+                f"?width=768&height=768&model=turbo&private=true"
+            )
+            print(
+                f"[image-gen:{request_id}] tool fallback model=turbo url={turbo_url}",
+                flush=True,
+            )
+            resp = requests.get(turbo_url, timeout=90)
+            content_type = resp.headers.get("Content-Type", "")
+            debug_body = "" if content_type.startswith("image/") else resp.text[:500]
+            print(
+                f"[image-gen:{request_id}] tool fallback response status={resp.status_code} "
+                f"content_type={content_type!r} body={debug_body!r}",
+                flush=True,
+            )
+            if resp.status_code == 200 and resp.content and content_type.startswith("image/"):
+                img_b64 = base64.b64encode(resp.content).decode()
+                if thread_id not in _pending_file_downloads:
+                    _pending_file_downloads[thread_id] = []
+                _pending_file_downloads[thread_id].append(
+                    {
+                        "name": "generated_image.png",
+                        "data": img_b64,
+                        "mime": content_type.split(";")[0],
+                        "is_generated_image": True,
+                    }
+                )
+                return f" تم إنشاء الصورة بنجاح! البرومبت المستخدم: {clean_prompt}"
+            last_status = resp.status_code
+
+        if last_status in (402, 429, 503):
+            return " خدمة توليد الصور مشغولة حاليًا. انتظر أقل من دقيقة وجرب مرة أخرى."
+        return f" فشل إنشاء الصورة (status {last_status})، جرّب مرة ثانية."
 
     except requests.Timeout:
         return " انتهى وقت الاتصال، جرّب مرة ثانية."
@@ -2134,7 +2320,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
 
     async def _handle_image_generation(self, message: str) -> str:
-        HF_TOKEN = os.getenv("HF_TOKEN")
         try:
             extraction_prompt = (
                 "Extract the image description from the user's request and translate it "
@@ -2151,45 +2336,214 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         await self._send_stream_chunk("🎨 بجهز الصورة دلوقتي...\n\n")
 
-        if not HF_TOKEN:
-            return "❌ مفتاح Hugging Face غير موجود. يرجى إضافة HF_TOKEN في ملف البيئة."
-
-        API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        payload = {"inputs": english_prompt}
+        encoded_prompt = quote(english_prompt.strip())
+        image_model = os.getenv("POLLINATIONS_IMAGE_MODEL", "turbo")
+        gemini_api_key = os.getenv("GOOGLE_API_KEY")
+        gemini_image_model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+        hf_token = os.getenv("HF_TOKEN")
+        hf_image_model = os.getenv("HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell")
+        request_id = uuid.uuid4().hex[:8]
+        image_url = (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"?width=768&height=768&model={image_model}&private=true"
+        )
+        print(
+            f"[image-gen:{request_id}] websocket start model={image_model} "
+            f"raw_message={message!r} english_prompt={english_prompt!r} url={image_url}",
+            flush=True,
+        )
 
         try:
+            if hf_token:
+                try:
+                    hf_url = (
+                        "https://router.huggingface.co/hf-inference/models/"
+                        f"{hf_image_model}"
+                    )
+                    print(
+                        f"[image-gen:{request_id}] websocket hf start model={hf_image_model}",
+                        flush=True,
+                    )
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            hf_url,
+                            headers={
+                                "Authorization": f"Bearer {hf_token}",
+                                "Accept": "image/png",
+                            },
+                            json={
+                                "inputs": english_prompt,
+                                "parameters": {
+                                    "width": 768,
+                                    "height": 768,
+                                    "num_inference_steps": 4,
+                                },
+                            },
+                            timeout=aiohttp.ClientTimeout(total=120),
+                        ) as response:
+                            content_type = response.headers.get("Content-Type", "")
+                            if response.status == 200 and content_type.startswith("image/"):
+                                image_bytes = await response.read()
+                                _queue_generated_image(
+                                    self.thread_id,
+                                    image_bytes,
+                                    content_type.split(";")[0],
+                                )
+                                print(
+                                    f"[image-gen:{request_id}] websocket hf response status={response.status} "
+                                    f"content_type={content_type!r} image_bytes={len(image_bytes)}",
+                                    flush=True,
+                                )
+                                return f"✅ الصورة جاهزة! البرومبت: {english_prompt}"
+
+                            hf_text = await response.text()
+                            print(
+                                f"[image-gen:{request_id}] websocket hf response status={response.status} "
+                                f"content_type={content_type!r} body={hf_text[:500]!r}",
+                                flush=True,
+                            )
+                except Exception as hf_err:
+                    print(
+                        f"[image-gen:{request_id}] websocket hf error={hf_err}",
+                        flush=True,
+                    )
+
+            if gemini_api_key:
+                try:
+                    gemini_url = (
+                        "https://generativelanguage.googleapis.com/v1beta/models/"
+                        f"{gemini_image_model}:generateContent"
+                    )
+                    print(
+                        f"[image-gen:{request_id}] websocket gemini start model={gemini_image_model}",
+                        flush=True,
+                    )
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            gemini_url,
+                            headers={
+                                "x-goog-api-key": gemini_api_key,
+                                "Content-Type": "application/json",
+                            },
+                            json=_gemini_image_payload(english_prompt),
+                            timeout=aiohttp.ClientTimeout(total=120),
+                        ) as response:
+                            gemini_text = await response.text()
+                            print(
+                                f"[image-gen:{request_id}] websocket gemini response status={response.status} "
+                                f"body={gemini_text[:500]!r}",
+                                flush=True,
+                            )
+                            if response.status == 200:
+                                try:
+                                    gemini_image = _extract_gemini_image(
+                                        json.loads(gemini_text)
+                                    )
+                                except Exception as parse_err:
+                                    print(
+                                        f"[image-gen:{request_id}] websocket gemini parse error={parse_err}",
+                                        flush=True,
+                                    )
+                                    gemini_image = None
+
+                                if gemini_image:
+                                    image_bytes, mime_type = gemini_image
+                                    _queue_generated_image(
+                                        self.thread_id, image_bytes, mime_type
+                                    )
+                                    return f"✅ الصورة جاهزة! البرومبت: {english_prompt}"
+                except Exception as gemini_err:
+                    print(
+                        f"[image-gen:{request_id}] websocket gemini error={gemini_err}",
+                        flush=True,
+                    )
+
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    API_URL,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=90),
-                ) as response:
-                    if response.status == 200:
-                        image_bytes = await response.read()
-                        img_b64 = base64.b64encode(image_bytes).decode()
+                retry_delays = [0, 8]
+                last_status = None
+                last_error = ""
 
-                        if self.thread_id not in _pending_file_downloads:
-                            _pending_file_downloads[self.thread_id] = []
-                        _pending_file_downloads[self.thread_id].append({
-                            "name": "generated_image.png",
-                            "data": img_b64,
-                            "mime": "image/png",
-                            "is_generated_image": True,
-                        })
-                        return f"✅ الصورة جاهزة! البرومبت: {english_prompt}"
+                for delay in retry_delays:
+                    if delay:
+                        await self._send_stream_chunk("الخدمة مشغولة شوية، بحاول تاني...\n")
+                        await asyncio.sleep(delay)
 
-                    elif response.status == 503:
-                        return "⏳ النموذج بيستنى يشتغل، حاول تاني بعد دقيقة."
-                    else:
-                        error_text = await response.text()
-                        return f"❌ فشل إنشاء الصورة (HTTP {response.status}): {error_text[:200]}"
+                    async with session.get(
+                        image_url,
+                        timeout=aiohttp.ClientTimeout(total=90),
+                    ) as response:
+                        last_status = response.status
+                        content_type = response.headers.get("Content-Type", "")
+                        last_error = ""
+                        if not content_type.startswith("image/"):
+                            last_error = await response.text()
+                        print(
+                            f"[image-gen:{request_id}] websocket response status={response.status} "
+                            f"content_type={content_type!r} body={last_error[:500]!r}",
+                            flush=True,
+                        )
+                        if response.status == 200 and content_type.startswith("image/"):
+                            image_bytes = await response.read()
+                            img_b64 = base64.b64encode(image_bytes).decode()
+
+                            if self.thread_id not in _pending_file_downloads:
+                                _pending_file_downloads[self.thread_id] = []
+                            _pending_file_downloads[self.thread_id].append({
+                                "name": "generated_image.png",
+                                "data": img_b64,
+                                "mime": content_type.split(";")[0],
+                                "is_generated_image": True,
+                            })
+                            return f"✅ الصورة جاهزة! البرومبت: {english_prompt}"
+
+                        if response.status not in (402, 429, 503):
+                            break
+
+                if last_status in (402, 429, 503) and image_model != "turbo":
+                    turbo_url = (
+                        f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+                        f"?width=768&height=768&model=turbo&private=true"
+                    )
+                    print(
+                        f"[image-gen:{request_id}] websocket fallback model=turbo url={turbo_url}",
+                        flush=True,
+                    )
+                    async with session.get(
+                        turbo_url,
+                        timeout=aiohttp.ClientTimeout(total=90),
+                    ) as response:
+                        last_status = response.status
+                        content_type = response.headers.get("Content-Type", "")
+                        last_error = ""
+                        if not content_type.startswith("image/"):
+                            last_error = await response.text()
+                        print(
+                            f"[image-gen:{request_id}] websocket fallback response status={response.status} "
+                            f"content_type={content_type!r} body={last_error[:500]!r}",
+                            flush=True,
+                        )
+                        if response.status == 200 and content_type.startswith("image/"):
+                            image_bytes = await response.read()
+                            img_b64 = base64.b64encode(image_bytes).decode()
+
+                            if self.thread_id not in _pending_file_downloads:
+                                _pending_file_downloads[self.thread_id] = []
+                            _pending_file_downloads[self.thread_id].append({
+                                "name": "generated_image.png",
+                                "data": img_b64,
+                                "mime": content_type.split(";")[0],
+                                "is_generated_image": True,
+                            })
+                            return f"✅ الصورة جاهزة! البرومبت: {english_prompt}"
+
+                if last_status in (402, 429, 503):
+                    return "❌ خدمة توليد الصور مشغولة حاليًا لأن فيه طلب صورة تاني في الطابور. استنى أقل من دقيقة وجرب مرة أخرى."
+                return f"❌ فشل إنشاء الصورة (HTTP {last_status}): {last_error[:200]}"
 
         except asyncio.TimeoutError:
             return "⏰ انتهى الوقت، جرّب مرة أخرى."
         except Exception as e:
-            return f"❌ خطأ أثناء الاتصال بـ Hugging Face: {str(e)}"            #=======================================
+            return f"❌ خطأ أثناء الاتصال بخدمة توليد الصور: {str(e)}"            #=======================================
 
     async def _send_pending_files(self):
         files = _pending_file_downloads.pop(self.thread_id, [])
@@ -2215,6 +2569,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         }
                     )
                 )
+        return files
 
     async def _replace_stream_text(self, text: str):
         await self.send(
@@ -2845,11 +3200,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     raw_content = await self._handle_image_generation(message)
                     await self._send_text_chunks(raw_content)
                     await self.send(text_data=json.dumps({"type": "stream_end"}))
-                    await self._send_pending_files()
+                    sent_files = await self._send_pending_files()
                     await self.update_user_memories(
                         f"User: {message}\nBot: {raw_content}"
                     )
-                    await self.save_chat_message("bot", raw_content)
+                    generated_image = next(
+                        (f for f in sent_files if f.get("is_generated_image")), None
+                    )
+                    if generated_image:
+                        history_payload = json.dumps(
+                            {
+                                "type": "generated_image",
+                                "message": raw_content,
+                                "image_data": generated_image["data"],
+                                "mime_type": generated_image["mime"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        await self.save_chat_message("bot", history_payload)
+                    else:
+                        await self.save_chat_message("bot", raw_content)
                     return
                 else:
                     is_about_file = _is_pdf_related_question(
