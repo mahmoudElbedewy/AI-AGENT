@@ -1103,8 +1103,9 @@ Never ignore a clearly necessary tool.
 
 Never use tools unnecessarily.
 
-- Use create_word_doc  when the user asks for a Word document, report, letter, CV, or any formatted text document.
-- Use create_excel_file when the user asks for an Excel sheet, spreadsheet, table, budget, tracker, or data export.
+- Only call create_word_doc or create_excel_file when the user EXPLICITLY asks you to produce a downloadable file (e.g. "اعملي ملف وورد", "ابعتلي ملف اكسل", "حملي ملف pdf", "نزلي اكسل").
+- If the user asks you to summarize, review, comment on, or discuss an UPLOADED file (PDF/Word/Excel/CV), or asks for information "في شكل جدول" / "على هيئة جدول" / "table", respond directly in the chat (using a Markdown table if a table is requested). Do NOT create a new file in this case, even if the words "جدول", "ملف", "وورد", or "اكسل" appear in the user's message.
+- Never create a file just because the answer could be presented as a table or list — only create a file when the user clearly wants something to download/save.
 - When creating files: first think about the full content, THEN call the tool with complete well-structured data.
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -1158,6 +1159,7 @@ Your ONLY job is to help with calculations, running Python code, and creating fi
 - Use execute_python_code to run Python code when the user asks.
 - Use create_word_doc when the user wants a Word document.
 - Use create_excel_file when the user wants an Excel spreadsheet.
+- Only use create_word_doc / create_excel_file when the user explicitly requests a downloadable file. Reviewing, summarizing, or discussing an uploaded file does NOT require creating a new file — answer in the chat instead.
 Always provide complete, detailed responses with no length restrictions.
 Never truncate or shorten your output.
 Respond in the same language as the user."""
@@ -1324,6 +1326,8 @@ async def stream_llm_async(llm, prompt):
             break
         yield item
 
+def _strip_cmd_markers(text: str) -> str:
+    return re.sub(r"\[CMD:[A-Z_]+\]\s*", "", str(text or "")).strip()
 
 _INTERNAL_LEAK_PATTERNS = (
     r"\[User Query Analysis\]",
@@ -1373,6 +1377,8 @@ def _normalize_arabic_query(text: str) -> str:
 
 
 def _is_pdf_related_question(message: str) -> bool:
+    if "[CMD:PDF]" in message or "[CMD:ANALYZE_IMAGE]" in message:
+        return True
     normalized = _normalize_arabic_query(message)
     compact = re.sub(r"\s+", "", normalized)
     english = str(message or "").lower()
@@ -1419,6 +1425,8 @@ def _is_pdf_related_question(message: str) -> bool:
 
 
 def _needs_code_execution(message: str) -> bool:
+    if "[CMD:CODE]" in message:
+        return True
     normalized = _normalize_arabic_query(message)
     english = message.lower()
 
@@ -1447,6 +1455,8 @@ def _needs_code_execution(message: str) -> bool:
 
 
 def _needs_file_creation(message: str) -> bool:
+    if "[CMD:WORD]" in message or "[CMD:EXCEL]" in message:
+        return True
     normalized = _normalize_arabic_query(message)
     english = message.lower()
     triggers = [
@@ -1483,9 +1493,6 @@ def _needs_file_creation(message: str) -> bool:
         "اكسيل",
         "xlsx",
         "تقرير",
-        "ملف",
-        "جدول",
-        "جداول",
         "سي في",
         "cv",
         "resume",
@@ -1493,13 +1500,17 @@ def _needs_file_creation(message: str) -> bool:
         "خطة",
         "بروبوزال",
         "proposal",
-    ]
+    ]   
     has_trigger = any(t in normalized or t in english for t in triggers)
     has_filetype = any(f in normalized or f in english for f in file_types)
     return has_trigger and has_filetype
 
 
 def _needs_image_generation(message: str) -> bool:
+    if "[CMD:IMAGE]" in message:
+        return True
+    if _is_summary_request(message) or _is_pdf_related_question(message):
+        return False
     normalized = _normalize_arabic_query(message)
     english = message.lower()
     triggers = [
@@ -1588,6 +1599,8 @@ def _is_image_generation_followup(message: str, last_bot_reply: str = "") -> boo
 
 
 def _needs_live_search(message: str) -> bool:
+    if "[CMD:SEARCH]" in message:
+        return True
     if not message:
         return False
 
@@ -1848,6 +1861,8 @@ def _split_text_chunks(text: str, chunk_size: int = 5500, overlap: int = 550):
 
 
 def _is_summary_request(message: str) -> bool:
+    if "[CMD:SUMMARY]" in message or "[CMD:YOUTUBE]" in message:
+        return True
     normalized = _normalize_arabic_query(message)
     english = str(message or "").lower()
     arabic_terms = (
@@ -2157,8 +2172,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_memories (
-                thread_id TEXT PRIMARY KEY,
+                user_id TEXT PRIMARY KEY,
                 facts TEXT DEFAULT ''
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                conversation_id TEXT PRIMARY KEY,
+                user_id TEXT,
+                title TEXT DEFAULT 'محادثة جديدة',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         cursor.execute("""
@@ -2191,19 +2215,41 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         user = self.scope.get("user")
         if user and user.is_authenticated:
-            self.thread_id = f"user_session_{user.id}"
+            self.user_id = f"user_{user.id}"
         elif token_user_id:
-            self.thread_id = f"user_session_{token_user_id}"
+            self.user_id = f"user_{token_user_id}"
         elif guest_id:
-            self.thread_id = f"guest_session_{guest_id}"
+            self.user_id = f"guest_{guest_id}"
         else:
-            self.thread_id = f"guest_session_{uuid.uuid4().hex[:4]}"
+            self.user_id = f"guest_{uuid.uuid4().hex[:4]}"
+
+        conversation_id = query_params.get("conversation_id", [None])[0]
+        is_new_conversation = False
+        if not conversation_id:
+            conversation_id = uuid.uuid4().hex
+            is_new_conversation = True
+
+        self.conversation_id = conversation_id
+        self.thread_id = f"{self.user_id}_conv_{conversation_id}"
 
         self.config = {
             "configurable": {"thread_id": self.thread_id},
             "recursion_limit": 25,
         }
+
+        if is_new_conversation:
+            await self._create_conversation_record()
+
         try:
+            conversations_list = await self.load_conversations_list()
+            await self.send(
+                text_data=json.dumps({
+                    "type": "session_info",
+                    "conversation_id": self.conversation_id,
+                    "conversations": conversations_list,
+                })
+            )
+
             chat_history = await self.load_chat_history()
             if chat_history:
                 await self.send(
@@ -2226,6 +2272,23 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 """,
                 (str(uuid.uuid4()), self.thread_id, role, str(message)),
             )
+            if role == "user":
+                cursor.execute(
+                    "SELECT title FROM conversations WHERE conversation_id = ?",
+                    (self.conversation_id,),
+                )
+                row = cursor.fetchone()
+                if row and (row[0] == "محادثة جديدة" or not row[0]):
+                    new_title = str(message).strip()[:50]
+                    cursor.execute(
+                        "UPDATE conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE conversation_id = ?",
+                        (new_title, self.conversation_id),
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE conversation_id = ?",
+                        (self.conversation_id,),
+                    )
             conn.commit()
 
     @database_sync_to_async
@@ -2247,7 +2310,43 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 history.append({"role": role, "message": message})
             return history
 
-    async def _send_text_chunks(self, text: str, chunk_size: int = 900):
+    @database_sync_to_async
+    def _create_conversation_record(self):
+        with sqlite3.connect(self.db, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO conversations (conversation_id, user_id, title)
+                VALUES (?, ?, ?)
+                """,
+                (self.conversation_id, self.user_id, "محادثة جديدة"),
+            )
+            conn.commit()
+
+    @database_sync_to_async
+    def load_conversations_list(self):
+        with sqlite3.connect(self.db, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT c.conversation_id, c.title, c.updated_at
+                FROM conversations c
+                WHERE c.user_id = ?
+                AND EXISTS (
+                    SELECT 1 FROM chat_messages cm
+                    WHERE cm.thread_id LIKE '%_conv_' || c.conversation_id
+                )
+                ORDER BY c.updated_at DESC
+                """,
+                (self.user_id,),
+            )
+            return [
+                {"conversation_id": row[0], "title": row[1], "updated_at": row[2]}
+                for row in cursor.fetchall()
+            ]
+
+
+    async def _send_text_chunks(self, text: str, chunk_size: int = 500):
         text = str(text or "").strip()
         if not text:
             text = "تمام يا صاحبي، معاك. ابعتلي اللي محتاجه وأنا أساعدك خطوة بخطوة."
@@ -2320,12 +2419,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
 
     async def _handle_image_generation(self, message: str) -> str:
+        clean_message = re.sub(r"\[CMD:[A-Z_]+\]\s*", "", message).strip()
         try:
             extraction_prompt = (
                 "Extract the image description from the user's request and translate it "
                 "into a detailed, vivid English prompt suitable for AI image generation. "
                 "Return ONLY the English prompt, no explanation.\n"
-                f"User request: {message}"
+                f"User request: {clean_message}"
             )
             resp = await asyncio.to_thread(light_llm.invoke, extraction_prompt)
             english_prompt = (
@@ -2545,8 +2645,41 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             return f"❌ خطأ أثناء الاتصال بخدمة توليد الصور: {str(e)}"            #=======================================
 
+    async def _simple_chat(self, message: str, history: list) -> str:
+        """محادثة عادية مع streaming و history"""
+        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
+        recent = history[-15:] if len(history) > 6 else history
+        file_ctx = self._get_recent_file_context()
+
+        full_system = self.formatted_system_prompt
+        if file_ctx.strip():
+            full_system += f"\n\n[CONTEXT OF UPLOADED FILES]:\n{file_ctx}"
+        if hasattr(self, "last_youtube_transcript") and self.last_youtube_transcript:
+            full_system += f"\n\n[Last YouTube Video Content]:\n{self.last_youtube_transcript[:4000]}"
+
+
+        chat_messages = [SystemMessage(content=full_system)]
+        for h in recent:
+            if h["role"] == "user":
+                chat_messages.append(HumanMessage(content=h["message"]))
+            elif h["role"] == "bot":
+                chat_messages.append(AIMessage(content=h["message"]))
+        chat_messages.append(HumanMessage(content=message))
+
+        raw_content = ""
+        async for text in stream_llm_async(simple_chat_llm, chat_messages):
+            raw_content += text
+            await self._send_stream_chunk(text)
+        return raw_content
+
     async def _send_pending_files(self):
         files = _pending_file_downloads.pop(self.thread_id, [])
+        if files:
+            seen = {}
+            for f in files:
+                seen[f.get("name", "file")] = f
+            files = list(seen.values())
         for f in files:
             if f.get("is_generated_image"):
                 await self.send(
@@ -2670,6 +2803,103 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         return "تمام يا صاحبي، فهمتك. قولّي محتاج تعرف إيه بالظبط وأنا هجاوبك بشكل مباشر وبسيط."
 
+    async def _classify_intent(self, message: str, last_bot_reply: str = "") -> str:
+
+        # ── 1. CMD markers ─────────────────────────────────────────────────────
+        cmd_map = {
+            "[CMD:PDF]":           "pdf",
+            "[CMD:ANALYZE_IMAGE]": "image_analysis",
+            "[CMD:IMAGE]":         "image_gen",
+            "[CMD:SEARCH]":        "search",
+            "[CMD:CALC]":          "code_exec",
+            "[CMD:SUMMARY]":       "summary",
+            "[CMD:YOUTUBE]":       "youtube",
+            "[CMD:WORD]":          "file_create",
+            "[CMD:EXCEL]":         "file_create",
+            "[CMD:CODE]":          "code_exec",
+        }
+        for cmd, intent in cmd_map.items():
+            if cmd in message:
+                return intent
+
+        # ── 2. YouTube URL ──────────────────────────────────────────────────────
+        if re.search(r"https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w\-]+", message):
+            return "youtube"
+
+        normalized = _normalize_arabic_query(message)
+        english    = message.lower().strip()
+
+        # ── 3. Image generation (طلب صريح فقط) ────────────────────────────────
+        IMAGE_GEN_TRIGGERS = {
+            "ارسم", "ارسملي", "ارسم لي", "اعمل صورة", "اعمللي صورة",
+            "اعمل صوره", "اعمللي صوره", "ولد صورة", "انشئ صورة",
+            "جيب صورة", "صورلي", "صور لي",
+            "generate image", "create image", "draw", "make image",
+            "make a picture", "generate a picture", "create a picture", "illustrate",
+        }
+        if any(t in normalized or t in english for t in IMAGE_GEN_TRIGGERS):
+            return "image_gen"
+
+        # followup تأكيد بعد ما البوت عرض يرسم صورة
+        if last_bot_reply:
+            last_norm = _normalize_arabic_query(last_bot_reply)
+            bot_offered_image = any(w in last_norm or w in last_bot_reply.lower()
+                for w in ("صوره", "صورة", "image", "picture", "ارسم", "draw"))
+            if bot_offered_image:
+                confirm_words = {"تمام","ايوه","اه","ok","yes","ممكن","عايز","عاوز","يلا","اوك"}
+                if any(w in normalized or w in english for w in confirm_words):
+                    return "image_gen"
+
+        # ── 4. Code execution (طلب تشغيل + كود موجود) ─────────────────────────
+        CODE_TRIGGERS  = {"شغل", "اشغل", "نفذ", "شغله", "نفذه", "run", "execute"}
+        CODE_KEYWORDS  = {"كود", "code", "python", "سكريبت", "script", "برنامج", "دالة", "function"}
+        has_run    = any(t in normalized or t in english for t in CODE_TRIGGERS)
+        has_code   = any(t in normalized or t in english for t in CODE_KEYWORDS)
+        # أو فيه code block فعلي في الرسالة
+        has_block  = "```" in message or "    " in message
+        if has_run and (has_code or has_block):
+            return "code_exec"
+
+        # ── 5. File creation (طلب ملف صريح للتنزيل) ───────────────────────────
+        FILE_TRIGGERS = {
+            "اعملي", "اعمل", "انشئ", "انشئي", "جهز", "جهزلي", "حضر", "حضرلي",
+            "ابعتلي", "نزلي", "حملي", "create", "make", "generate", "build", "produce",
+        }
+        FILE_TYPES = {
+            "وورد", "ورد", "word", "docx",
+            "اكسل", "اكسيل", "excel", "xlsx",
+            "سيرة ذاتية", "cv", "resume", "سي في",
+        }
+        has_file_trigger = any(t in normalized or t in english for t in FILE_TRIGGERS)
+        has_file_type    = any(t in normalized or t in english for t in FILE_TYPES)
+        if has_file_trigger and has_file_type:
+            return "file_create"
+
+        # ── 6. PDF / Image analysis ─────────────────────────────────────────────
+        PDF_SIGNALS = {
+            "pdf", "سيفي", "سي في", "السيره", "السيرة", "الملف المرفوع",
+            "في الملف", "من الملف", "الملف ده", "كتاب", "محاضرة", "سكشن",
+            "اعرفني", "عرفني", "معلومات عني",
+        }
+        if any(t in normalized or t in english for t in PDF_SIGNALS):
+            return "pdf"
+
+        IMAGE_ANALYSIS_SIGNALS = {"حلل الصورة", "وصف الصورة", "analyze image", "describe image", "what's in the image"}
+        if any(t in normalized or t in english for t in IMAGE_ANALYSIS_SIGNALS):
+            return "image_analysis"
+
+        # ── 7. Summary ──────────────────────────────────────────────────────────
+        SUMMARY_TRIGGERS = {
+            "لخص", "لخصلي", "تلخيص", "ملخص", "اختصر",
+            "الخلاصه", "الخلاصة", "اهم النقاط", "اهم الافكار",
+            "summary", "summarize", "summarise", "recap", "key points",
+        }
+        if any(t in normalized or t in english for t in SUMMARY_TRIGGERS):
+            return "summary"
+
+        # ── 9. Default: chat ────────────────────────────────────────────────────
+        print(f"[IntentClassifier] 'chat' ← '{message[:60]}'")
+        return "chat"
     async def _answer_with_live_search(self, message: str) -> str:
         query = str(message or "").strip()
         print(f" [LIVE SEARCH] query='{query}'")
@@ -2731,8 +2961,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             with sqlite3.connect(self.db, timeout=30) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT facts FROM user_memories WHERE thread_id = ?",
-                    (self.thread_id,),
+                    "SELECT facts FROM user_memories WHERE user_id = ?",
+                    (self.user_id,),
                 )
                 row = cursor.fetchone()
                 current_facts = row[0].strip() if row and row[0] else ""
@@ -2743,8 +2973,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     else new_fact
                 )
                 cursor.execute(
-                    "REPLACE INTO user_memories (thread_id, facts) VALUES (?, ?)",
-                    (self.thread_id, updated_facts),
+                    "REPLACE INTO user_memories (user_id, facts) VALUES (?, ?)",
+                    (self.user_id, updated_facts),
                 )
                 conn.commit()
         except Exception as me:
@@ -2883,6 +3113,28 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     print(f" [Vision PDF] Page {i} failed: {e}")
                     extracted_text += f"\n\n--- Page {i} ---\n[فشل استخراج الصفحة]\n"
         return extracted_text
+    @database_sync_to_async
+    def _rename_conversation(self, conversation_id: str, new_title: str):
+        with sqlite3.connect(self.db, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE conversations SET title = ? WHERE conversation_id = ? AND user_id = ?",
+                (new_title, conversation_id, self.user_id),
+            )
+            conn.commit()
+
+    @database_sync_to_async
+    def _delete_conversation_data(self, conversation_id: str):
+        thread_id = f"{self.user_id}_conv_{conversation_id}"
+        with sqlite3.connect(self.db, timeout=30) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM chat_messages WHERE thread_id = ?", (thread_id,))
+            cursor.execute("DELETE FROM thread_attachments WHERE thread_id = ?", (thread_id,))
+            cursor.execute(
+                "DELETE FROM conversations WHERE conversation_id = ? AND user_id = ?",
+                (conversation_id, self.user_id),
+            )
+            conn.commit()
 
     async def disconnect(self, close_code):
         if hasattr(self, "conn"):
@@ -2893,6 +3145,33 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         text_data_json = json.loads(text_data)
         msg_type = text_data_json.get("type", "text")
+
+        if msg_type == "rename_conversation":
+            conv_id = text_data_json.get("conversation_id", "")
+            new_title = str(text_data_json.get("title", "")).strip()[:60]
+            if conv_id and new_title:
+                await self._rename_conversation(conv_id, new_title)
+            convs = await self.load_conversations_list()
+            await self.send(text_data=json.dumps({
+                "type": "session_info",
+                "conversation_id": self.conversation_id,
+                "conversations": convs,
+            }))
+            return
+
+        if msg_type == "delete_conversation":
+            conv_id = text_data_json.get("conversation_id", "")
+            is_current = conv_id == self.conversation_id
+            if conv_id:
+                await self._delete_conversation_data(conv_id)
+            convs = await self.load_conversations_list()
+            await self.send(text_data=json.dumps({
+                "type": "session_info",
+                "conversation_id": self.conversation_id,
+                "conversations": convs,
+                "deleted_current": is_current,
+            }))
+            return
 
         user_message_check = text_data_json.get("message", "")
         is_english = any(
@@ -3041,355 +3320,175 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.save_chat_message("bot", bot_reply)
             await self.send(text_data=json.dumps({"reply": bot_reply}))
             return
-
         message = text_data_json.get("message", "")
-        await self.save_chat_message("user", message)
+        await self.save_chat_message("user", _strip_cmd_markers(message))
 
-        if _needs_live_search(message) and not _needs_file_creation(message):
-            await self.send(text_data=json.dumps({"type": "stream_start"}))
-            bot_reply = await self._answer_with_live_search(message)
-            await self._send_text_chunks(bot_reply)
-            await self.send(text_data=json.dumps({"type": "stream_end"}))
-            await self.save_chat_message("bot", bot_reply)
-            return
+        try:
+            _full_history = await self.load_chat_history()
+            _bot_msgs = [h for h in _full_history if h["role"] == "bot"]
+            last_bot = _bot_msgs[-1]["message"] if _bot_msgs else ""
+        except Exception:
+            _full_history = []
+            last_bot = ""
+
+        intent = await self._classify_intent(message, last_bot)
 
         try:
             with sqlite3.connect(self.db, timeout=30) as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT facts FROM user_memories WHERE thread_id = ?",
-                    (self.thread_id,),
-                )
+                cursor.execute("SELECT facts FROM user_memories WHERE user_id = ?", (self.user_id,))
                 row = cursor.fetchone()
-                user_facts = row[0] if row else "No historic context data found yet."
 
                 cursor.execute(
-                    """
-                    SELECT file_name, file_content FROM thread_attachments 
-                    WHERE thread_id = ? AND file_type = 'image' 
-                    ORDER BY uploaded_at DESC LIMIT 1
-                """,
+                    """SELECT file_name, file_content FROM thread_attachments
+                       WHERE thread_id = ? AND file_type = 'pdf'
+                       ORDER BY uploaded_at DESC LIMIT 1""",
+                    (self.thread_id,),
+                )
+                pdf_row = cursor.fetchone()
+
+                cursor.execute(
+                    """SELECT file_name, file_content FROM thread_attachments
+                       WHERE thread_id = ? AND file_type = 'image'
+                       ORDER BY uploaded_at DESC LIMIT 1""",
                     (self.thread_id,),
                 )
                 image_row = cursor.fetchone()
 
-            image_keywords = {
-                "صوره",
-                "صورة",
-                "screenshot",
-                "لقطة",
-                "شايف",
-                "دي",
-                "المنشور",
-                "image",
-                "pic",
-                "حل",
-                "اشرح",
-            }
-            is_asking_about_image = any(kw in message.lower() for kw in image_keywords)
-            _chat_history_for_image = await self.load_chat_history()
-            _bot_messages = [
-                h for h in _chat_history_for_image if h["role"] == "bot"
-            ]
-            _last_bot_reply_for_image_check = (
-                _bot_messages[-1]["message"] if _bot_messages else ""
-            )
-            if image_row and is_asking_about_image:
-                file_name, base64_str = image_row
-                if isinstance(base64_str, bytes):
-                    base64_str = base64_str.decode("utf-8")
-                if "data:image" in base64_str:
-                    base64_str = base64_str.split(",")[-1]
+            await self.send(text_data=json.dumps({"type": "stream_start"}))
+            raw_content = ""
 
-                ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
-                mime_type = f"image/{ext}"
-
-                formatted_messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"Answer the user naturally about the attached image. User query: {message}",
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{base64_str}"
-                                },
-                            },
-                        ],
-                    }
-                ]
-
-                try:
-                    response = await asyncio.to_thread(
-                        vision_llm.invoke, formatted_messages
-                    )
-                    raw_content = response.content
-                except Exception as vision_err:
-                    print(f"️ Direct Vision Model Error: {vision_err}")
-                    raw_content = "عذراً، حدث خطأ أثناء تحليل الصورة المباشر."
-
-                raw_content = await self._prepare_bot_reply(raw_content, message)
-                await self.send(text_data=json.dumps({"type": "stream_start"}))
-                await self._send_text_chunks(raw_content)
-                await self.send(text_data=json.dumps({"type": "stream_end"}))
-            else:
+            if intent == "youtube":
                 youtube_match = re.search(
                     r"(https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w\-]+)",
                     message,
                 )
-                if youtube_match:
-                    youtube_url = youtube_match.group(1)
-                    try:
-                        transcript_content = await asyncio.to_thread(
-                            analyze_youtube_video.invoke,
-                            {"youtube_url": youtube_url, "query": message},
-                        )
-                        self.last_youtube_transcript = transcript_content
-
-                        llm_prompt = f"""أنت مساعد ذكي محترف. المستخدم أرسل رابط يوتيوب وطلب: "{message}"
-                        
-                            المحتوى المستخرج من الفيديو:
-                            {transcript_content}
-
-                            قم بالرد على طلب المستخدم بناءً على محتوى الفيديو بشكل احترافي، مباشر، ومفصل. 
-                            شروط هامة جداً للاستجابة:
-                            1. إياك وتكرار الجمل أو الفقرات (لا تدخل في حلقة مفرغة).
-                            2. حافظ على المصطلحات التقنية والبرمجية وأسماء التقنيات باللغة الإنجليزية كما هي، لا تقم بترجمتها للعربية.
-                            """
-
-                        raw_content = ""
-                        await self.send(text_data=json.dumps({"type": "stream_start"}))
-
-                        async for text in stream_llm_async(heavy_llm, llm_prompt):
-                            raw_content += text
-                            await self._send_stream_chunk(text)
-                        raw_content = await self._prepare_bot_reply(
-                            raw_content, message
-                        )
-                        if raw_content:
-                            await self._replace_stream_text(raw_content)
-                        await self.send(text_data=json.dumps({"type": "stream_end"}))
-                    except Exception as yt_err:
-                        await self.send(text_data=json.dumps({"type": "stream_start"}))
-                        print(f"️ YouTube Analysis Error: {yt_err}")
-                        error_msg = "عذراً، حدث خطأ أثناء تحليل الفيديو. قد يكون الفيديو طويلاً جداً أو مقيداً."
-                        raw_content = error_msg
-                        await self.send(
-                            text_data=json.dumps(
-                                {"type": "stream_chunk", "chunk": error_msg}
-                            )
-                        )
-                        await self.send(text_data=json.dumps({"type": "stream_end"}))
-                elif _needs_code_execution(message):
-                    await self.send(text_data=json.dumps({"type": "stream_start"}))
-                    raw_content = await self._handle_code_execution_request(message)
+                youtube_url = youtube_match.group(1) if youtube_match else message
+                try:
+                    transcript_content = await asyncio.to_thread(
+                        analyze_youtube_video.invoke,
+                        {"youtube_url": youtube_url, "query": message},
+                    )
+                    self.last_youtube_transcript = transcript_content
+                    llm_prompt = f"""أنت مساعد ذكي. طلب المستخدم: "{message}"
+المحتوى المستخرج من الفيديو:
+{transcript_content}
+رد بشكل مفصل. لا تكرر جملاً. حافظ على المصطلحات التقنية بالإنجليزي."""
+                    async for text in stream_llm_async(heavy_llm, llm_prompt):
+                        raw_content += text
+                        await self._send_stream_chunk(text)
+                except Exception as yt_err:
+                    print(f"YouTube Error: {yt_err}")
+                    raw_content = "عذراً، حدث خطأ أثناء تحليل الفيديو."
                     await self._send_text_chunks(raw_content)
-                    await self.send(text_data=json.dumps({"type": "stream_end"}))
-                    await self.update_user_memories(
-                        f"User: {message}\nBot: {raw_content}"
-                    )
-                    await self.save_chat_message("bot", raw_content)
-                    return
-                elif _needs_image_generation(message) or _is_image_generation_followup(
-                    message, _last_bot_reply_for_image_check
-                ):
-                    await self.send(text_data=json.dumps({"type": "stream_start"}))
-                    raw_content = await self._handle_image_generation(message)
-                    await self._send_text_chunks(raw_content)
-                    await self.send(text_data=json.dumps({"type": "stream_end"}))
-                    sent_files = await self._send_pending_files()
-                    await self.update_user_memories(
-                        f"User: {message}\nBot: {raw_content}"
-                    )
-                    generated_image = next(
-                        (f for f in sent_files if f.get("is_generated_image")), None
-                    )
-                    if generated_image:
-                        history_payload = json.dumps(
-                            {
-                                "type": "generated_image",
-                                "message": raw_content,
-                                "image_data": generated_image["data"],
-                                "mime_type": generated_image["mime"],
-                            },
-                            ensure_ascii=False,
-                        )
-                        await self.save_chat_message("bot", history_payload)
-                    else:
-                        await self.save_chat_message("bot", raw_content)
-                    return
+
+            elif intent == "code_exec":
+                raw_content = await self._handle_code_execution_request(message)
+                await self._send_text_chunks(raw_content)
+                await self.send(text_data=json.dumps({"type": "stream_end"}))
+                await self._send_pending_files()
+                await self.update_user_memories(f"User: {message}\nBot: {raw_content}")
+                await self.save_chat_message("bot", raw_content)
+                return
+
+            elif intent == "image_gen":
+                raw_content = await self._handle_image_generation(message)
+                clean_reply = "✅ الصورة جاهزة!" if "جاهزة" in raw_content or "✅" in raw_content else raw_content
+                await self._replace_stream_text(clean_reply)
+                await self.send(text_data=json.dumps({"type": "stream_end"}))
+                sent_files = await self._send_pending_files()
+                await self.update_user_memories(f"User: {message}\nBot: {clean_reply}")
+                generated = next((f for f in sent_files if f.get("is_generated_image")), None)
+                if generated:
+                    payload = json.dumps({"type": "generated_image", "message": clean_reply,
+                        "image_data": generated["data"], "mime_type": generated["mime"]}, ensure_ascii=False)
+                    await self.save_chat_message("bot", payload)
                 else:
-                    is_about_file = _is_pdf_related_question(
-                        message
-                    ) or _is_summary_request(message)
-                    needs_tools = any(
-                        [
-                            _needs_live_search(message),
-                            is_about_file,
-                            _needs_file_creation(message),
-                            "youtube.com" in message.lower(),
-                            "youtu.be" in message.lower(),
-                        ]
-                    )
+                    await self.save_chat_message("bot", clean_reply)
+                return
 
-                    file_hint = self._get_recent_file_context()
-                    youtube_context = ""
-                    if (
-                        hasattr(self, "last_youtube_transcript")
-                        and self.last_youtube_transcript
-                    ):
-                        youtube_context = f"\n[Last YouTube Video Content]:\n{self.last_youtube_transcript[:4000]}\n"
-
-                    inject_file = file_hint.strip() and is_about_file
-
-                    simple_chat = not needs_tools
-
-                    if simple_chat:
-                        print(f" [SIMPLE CHAT MODE] message='{message[:50]}'")
-                        try:
-                            from langchain_core.messages import (
-                                SystemMessage,
-                                HumanMessage,
-                                AIMessage,
-                            )
-
-                            await self.send(
-                                text_data=json.dumps({"type": "stream_start"})
-                            )
-                            raw_content = ""
-
-                            history = await self.load_chat_history()
-                            recent = history[-10:] if len(history) > 6 else history
-
-                            recent_file = self._get_recent_file_context()
-                            full_system_prompt = self.formatted_system_prompt
-                            if recent_file.strip():
-                                full_system_prompt += (
-                                    f"\n\n[CONTEXT OF UPLOADED FILES]:\n{recent_file}"
-                                )
-
-                            chat_messages = [SystemMessage(content=full_system_prompt)]
-
-                            for h in recent:
-                                if h["role"] == "user":
-                                    chat_messages.append(
-                                        HumanMessage(content=h["message"])
-                                    )
-                                elif h["role"] == "bot":
-                                    chat_messages.append(
-                                        AIMessage(content=h["message"])
-                                    )
-
-                            chat_messages.append(HumanMessage(content=message))
-
-                            async for text in stream_llm_async(
-                                simple_chat_llm, chat_messages
-                            ):
-                                raw_content += text
-                                await self._send_stream_chunk(text)
-
-                            print(f" simple_chat OK, len={len(raw_content)}")
-                            bot_reply = await self._prepare_bot_reply(
-                                raw_content, message
-                            )
-                            if bot_reply != raw_content:
-                                await self._replace_stream_text(bot_reply)
-                            await self.send(
-                                text_data=json.dumps({"type": "stream_end"})
-                            )
-
-                            await self.save_chat_message("bot", bot_reply)
-                            return
-
-                        except Exception as e:
-                            print(f" Simple chat failed completely: {e}")
-
-                    if inject_file or youtube_context:
-                        formatted_user_message = f"""PRIVATE CONTEXT (لا تذكره للمستخدم):
-                            {file_hint if inject_file else ""}{youtube_context}
-
-                            رسالة المستخدم:
-                            {message}"""
-                    else:
-                        formatted_user_message = message
-
-                    messages_to_send = [("user", formatted_user_message)]
-
+            elif intent == "image_analysis":
+                if image_row:
+                    file_name, base64_str = image_row
+                    if isinstance(base64_str, bytes):
+                        base64_str = base64_str.decode("utf-8")
+                    if "data:image" in base64_str:
+                        base64_str = base64_str.split(",")[-1]
+                    ext = "png" if str(file_name).lower().endswith("png") else "jpeg"
+                    from langchain_core.messages import HumanMessage as LCMsg
+                    vision_msg = LCMsg(content=[
+                        {"type": "text", "text": f"حلل الصورة وأجب على: {message}"},
+                        {"type": "image_url", "image_url": {"url": f"data:image/{ext};base64,{base64_str}"}},
+                    ])
                     try:
-                        raw_content = ""
-                        await self.send(text_data=json.dumps({"type": "stream_start"}))
+                        response = await asyncio.to_thread(vision_llm.invoke, [vision_msg])
+                        raw_content = response.content if hasattr(response, "content") else str(response)
+                    except Exception as ve:
+                        raw_content = f"عذراً، فشل تحليل الصورة: {ve}"
+                    await self._send_text_chunks(raw_content)
+                else:
+                    raw_content = "مش شايف أي صورة مرفوعة. ارفع الصورة الأول!"
+                    await self._send_text_chunks(raw_content)
 
-                        result = await self.multi_agent.ainvoke(
-                            {"messages": [("user", formatted_user_message)]},
-                            config=self.config,
-                        )
+            elif intent == "search":
+                raw_content = await self._answer_with_live_search(message)
+                await self._send_text_chunks(raw_content)
 
-                        ai_messages = [
-                            m
-                            for m in result["messages"]
-                            if hasattr(m, "type") and m.type == "ai"
-                        ]
-                        if ai_messages:
-                            raw_content = ai_messages[-1].content or ""
+            elif intent in ("pdf", "summary"):
+                if pdf_row:
+                    file_name, pdf_content = pdf_row
+                    if isinstance(pdf_content, bytes):
+                        pdf_content = pdf_content.decode("utf-8", errors="ignore")
+                    raw_content = await self._answer_pdf_request_stream(
+                        pdf_content, file_name, message
+                    )
+                else:
+                    raw_content = await self._simple_chat(message, _full_history)
 
-                        await self._send_text_chunks(raw_content)
+            elif intent == "file_create":
+                _pending_file_downloads.pop(self.thread_id, None)
+                try:
+                    result = await self.multi_agent.ainvoke(
+                        {"messages": [("user", message)]},
+                        config=self.config,
+                    )
+                    ai_messages = [
+                        m for m in result["messages"]
+                        if hasattr(m, "type") and m.type == "ai"
+                    ]
+                    raw_content = ai_messages[-1].content if ai_messages else ""
+                    await self._send_text_chunks(raw_content)
+                except Exception as fa_err:
+                    print(f"File create error: {fa_err}")
+                    raw_content = "عذراً، حدث خطأ. حاول مرة أخرى."
+                    await self._send_text_chunks(raw_content)
 
-                        bot_reply = await self._prepare_bot_reply(raw_content, message)
-                        if bot_reply != raw_content:
-                            await self._replace_stream_text(bot_reply)
-                        raw_content = bot_reply
-                        await self.send(text_data=json.dumps({"type": "stream_end"}))
-                        await self._send_pending_files()
+            else:  # chat - الحالة الافتراضية
+                raw_content = await self._simple_chat(message, _full_history)
 
-                    except Exception as agent_err:
-                        print(f"Multi-agent error: {agent_err}")
-                        try:
-                            raw_content = ""
-                            async for text in stream_llm_async(
-                                light_llm, messages_to_send
-                            ):
-                                raw_content += text
-                                await self._send_stream_chunk(text)
-                            bot_reply = await self._prepare_bot_reply(
-                                raw_content, message
-                            )
-                            if bot_reply != raw_content:
-                                await self._replace_stream_text(bot_reply)
-                            raw_content = bot_reply
-                            await self.send(
-                                text_data=json.dumps({"type": "stream_end"})
-                            )
-                        except Exception:
-                            raw_content = "عذراً، حدث خطأ مؤقت."
-                            await self._send_text_chunks(raw_content)
-                            await self.send(
-                                text_data=json.dumps({"type": "stream_end"})
-                            )
-            if isinstance(raw_content, str):
-                bot_reply = raw_content
-            elif isinstance(raw_content, list):
-                texts = [
-                    part["text"]
-                    for part in raw_content
-                    if isinstance(part, dict) and "text" in part
-                ]
-                bot_reply = " ".join(texts) if texts else str(raw_content)
-            else:
-                bot_reply = str(raw_content)
-
+            # تنظيف وإرسال
+            bot_reply = await self._prepare_bot_reply(raw_content, message)
+            if bot_reply != raw_content:
+                await self._replace_stream_text(bot_reply)
+            await self.send(text_data=json.dumps({"type": "stream_end"}))
+            pending_files = await self._send_pending_files()
             await self.update_user_memories(f"User: {message}\nBot: {bot_reply}")
             await self.save_chat_message("bot", bot_reply)
+            for f in pending_files:
+                if not f.get("is_generated_image"):
+                    await self.save_chat_message("bot", json.dumps({
+                        "type": "file_download",
+                        "file_name": f["name"],
+                        "file_data": f["data"],
+                        "mime_type": f["mime"],
+                    }, ensure_ascii=False))
 
         except Exception as e:
-            print(f"Fatal error in processing: {e}")
-            bot_reply = (
-                "An error occurred with the network connection."
-                if is_english
-                else "عذراً يا غالي، يبدو أن هناك مشكلة اتصال عامة بالشبكة."
-            )
-
-            await self.send(text_data=json.dumps({"reply": bot_reply}))
+            print(f"Fatal error in receive(): {e}")
+            err_msg = "عذراً، حدث خطأ مؤقت. جرب تاني."
+            try:
+                await self.send(text_data=json.dumps({"type": "stream_end"}))
+            except Exception:
+                pass
+            await self.send(text_data=json.dumps({"reply": err_msg}))
             return
