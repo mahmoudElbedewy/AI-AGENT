@@ -4,45 +4,118 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>تسجيل الدخول - مساعد الذكاء الاصطناعي</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Markazi+Text:wght@500;600;700&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+
     <style>
+        :root {
+            --bg: #1f1d1a;
+            --fg: #f6f1e7;
+            --fg-secondary: #a39a8c;
+            --placeholder: #8a8276;
+            --input-bg: rgba(255, 255, 255, 0.05);
+            --input-border: rgba(255, 255, 255, 0.13);
+            --input-border-focus: rgba(246, 241, 231, 0.45);
+            --btn-bg: #f9f5ec;
+            --btn-text: #1f1d1a;
+            --error-bg: rgba(216, 119, 87, 0.12);
+            --error-border: rgba(216, 119, 87, 0.35);
+            --error-text: #e2916f;
+            --radius-input: 10px;
+            --radius-btn: 8px;
+            --font-display: 'Markazi Text', serif;
+            --font-body: 'Tajawal', sans-serif;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #0d0d0f;
-            color: #f0f0f5;
+            font-family: var(--font-body);
+            background-color: var(--bg);
+            background-image: radial-gradient(120% 90% at 15% 0%, rgba(255, 255, 255, 0.05), transparent 55%);
+            color: var(--fg);
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
         }
+
         .login-card {
-            background: #1a1a1f;
-            padding: 30px;
-            border-radius: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
             width: 100%;
-            max-width: 380px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+            max-width: 400px;
+            padding: 0 20px;
         }
-        .login-card h2 { text-align: center; margin-bottom: 25px; font-size: 22px; color: #f0f0f5; }
-        .form-group { margin-bottom: 20px; }
-        .form-group label { display: block; margin-bottom: 8px; color: #9898a8; font-size: 14px; }
+
+        .login-card h2 {
+            font-family: var(--font-display);
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 32px;
+            font-size: 34px;
+            letter-spacing: -0.3px;
+            color: var(--fg);
+        }
+
+        .form-group { margin-bottom: 18px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--fg-secondary);
+            font-size: 14px;
+            font-weight: 500;
+        }
         .form-group input {
-            width: 100%; padding: 12px; background: #0d0d0f; border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px; font-size: 15px; color: #f0f0f5; outline: none; transition: border-color 0.2s;
+            width: 100%;
+            padding: 12px 14px;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: var(--radius-input);
+            font-size: 14px;
+            color: var(--fg);
+            font-family: var(--font-body);
+            outline: none;
+            transition: border-color 0.2s, background 0.2s;
         }
-        .form-group input:focus { border-color: #f55036; }
+        .form-group input::placeholder { color: var(--placeholder); }
+        .form-group input:focus {
+            border-color: var(--input-border-focus);
+            background: rgba(255, 255, 255, 0.07);
+        }
+
         .login-btn {
-            width: 100%; padding: 12px; background-color: #f55036; color: white; border: none;
-            border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: opacity 0.2s;
+            width: 100%;
+            margin-top: 6px;
+            padding: 12px;
+            background-color: var(--btn-bg);
+            color: var(--btn-text);
+            border: none;
+            border-radius: var(--radius-btn);
+            font-size: 15px;
+            font-weight: 700;
+            font-family: var(--font-body);
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.15s;
         }
-        .login-btn:hover { opacity: 0.9; }
-        .error-msg { color: #f55036; font-size: 13px; text-align: center; margin-bottom: 15px; display: none; }
-        
-        /* التنسيقات الجديدة الخاصة برابط التسجيل */
-        .register-link { text-align: center; margin-top: 20px; font-size: 14px; color: #9898a8; }
-        .register-link a { color: #f55036; text-decoration: none; font-weight: bold; transition: 0.2s; }
-        .register-link a:hover { text-decoration: underline; color: #d43d25; }
+        .login-btn:hover { opacity: 0.88; }
+        .login-btn:active { transform: scale(0.98); }
+
+        .error-msg {
+            background: var(--error-bg);
+            border: 1px solid var(--error-border);
+            color: var(--error-text);
+            font-size: 13px;
+            text-align: center;
+            padding: 10px 14px;
+            border-radius: 8px;
+            margin-bottom: 18px;
+            display: none;
+        }
+
+        .register-link { text-align: center; margin-top: 28px; font-size: 13px; color: var(--fg-secondary); }
+        .register-link a { color: var(--fg); font-weight: 700; text-decoration: none; transition: opacity 0.2s; }
+        .register-link a:hover { opacity: 0.75; text-decoration: underline; }
     </style>
 </head>
 <body>

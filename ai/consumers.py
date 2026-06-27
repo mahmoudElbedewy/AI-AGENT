@@ -116,8 +116,44 @@ light_5_llama_or = ChatOpenAI(
     temperature=0,
 )
 
+# ── NaraRouter Free Models ──────────────────────────────────────────────
+nara_mistral_large = ChatOpenAI(
+    base_url="https://router.naraya.ai/v1",
+    api_key=os.getenv("NARA_API_KEY"),
+    model="mistral-large",
+    temperature=0,
+)
+
+nara_mistral_medium = ChatOpenAI(
+    base_url="https://router.naraya.ai/v1",
+    api_key=os.getenv("NARA_API_KEY"),
+    model="mistral-medium-3-5",
+    temperature=0,
+)
+
+nara_mimo_pro = ChatOpenAI(
+    base_url="https://router.naraya.ai/v1",
+    api_key=os.getenv("NARA_API_KEY"),
+    model="mimo-v2.5-pro-free",
+    temperature=0,
+)
+
+nara_mimo_vision = ChatOpenAI(
+    base_url="https://router.naraya.ai/v1",
+    api_key=os.getenv("NARA_API_KEY"),
+    model="mimo-v2.5-free",
+    temperature=0,
+)
+
+nara_mistral_large_chat = ChatOpenAI(
+    base_url="https://router.naraya.ai/v1",
+    api_key=os.getenv("NARA_API_KEY"),
+    model="mistral-large",
+    temperature=0.7,
+)
+
 light_llm = light_3_groq.with_fallbacks(
-    [light_5_llama_or, light_4_openai_oss, vision_llm_direct]
+    [light_5_llama_or, nara_mistral_medium, light_4_openai_oss, nara_mistral_large]
 )
 
 heavy_1_gemma = ChatOpenAI(
@@ -156,7 +192,8 @@ heavy_deepseek = ChatOpenAI(
 )
 
 heavy_llm = heavy_2_groq.with_fallbacks(
-    [heavy_1_gemma, heavy_deepseek, heavy_4_openai_oss, heavy_3_gemini_pro]
+    [nara_mistral_large, nara_mistral_medium, heavy_1_gemma,
+     heavy_deepseek, heavy_4_openai_oss, heavy_3_gemini_pro]
 )
 
 _deepseek_chat = ChatOpenAI(
@@ -181,9 +218,12 @@ _gemma_chat = ChatOpenAI(
 )
 
 simple_chat_llm = vision_llm_chat.with_fallbacks(
-    [_deepseek_chat, _groq_chat, _gemma_chat]
+    [nara_mistral_large_chat, _deepseek_chat, _groq_chat, _gemma_chat]
 )
-vision_llm = vision_llm_direct.with_fallbacks([heavy_4_openai_oss])
+
+vision_llm = vision_llm_direct.with_fallbacks(
+    [nara_mistral_medium, nara_mimo_vision, heavy_4_openai_oss]
+)
 
 search_tool = TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=3)
 
@@ -2805,7 +2845,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def _classify_intent(self, message: str, last_bot_reply: str = "") -> str:
 
-        # ── 1. CMD markers ─────────────────────────────────────────────────────
         cmd_map = {
             "[CMD:PDF]":           "pdf",
             "[CMD:ANALYZE_IMAGE]": "image_analysis",
@@ -2822,14 +2861,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
             if cmd in message:
                 return intent
 
-        # ── 2. YouTube URL ──────────────────────────────────────────────────────
         if re.search(r"https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w\-]+", message):
             return "youtube"
 
         normalized = _normalize_arabic_query(message)
         english    = message.lower().strip()
 
-        # ── 3. Image generation (طلب صريح فقط) ────────────────────────────────
         IMAGE_GEN_TRIGGERS = {
             "ارسم", "ارسملي", "ارسم لي", "اعمل صورة", "اعمللي صورة",
             "اعمل صوره", "اعمللي صوره", "ولد صورة", "انشئ صورة",
@@ -2840,65 +2877,110 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if any(t in normalized or t in english for t in IMAGE_GEN_TRIGGERS):
             return "image_gen"
 
-        # followup تأكيد بعد ما البوت عرض يرسم صورة
         if last_bot_reply:
             last_norm = _normalize_arabic_query(last_bot_reply)
-            bot_offered_image = any(w in last_norm or w in last_bot_reply.lower()
+            bot_offered = any(w in last_norm or w in last_bot_reply.lower()
                 for w in ("صوره", "صورة", "image", "picture", "ارسم", "draw"))
-            if bot_offered_image:
-                confirm_words = {"تمام","ايوه","اه","ok","yes","ممكن","عايز","عاوز","يلا","اوك"}
+            if bot_offered:
+                confirm_words = {"تمام", "ايوه", "اه", "ok", "yes", "ممكن", "عايز", "عاوز", "يلا", "اوك"}
                 if any(w in normalized or w in english for w in confirm_words):
                     return "image_gen"
 
-        # ── 4. Code execution (طلب تشغيل + كود موجود) ─────────────────────────
-        CODE_TRIGGERS  = {"شغل", "اشغل", "نفذ", "شغله", "نفذه", "run", "execute"}
-        CODE_KEYWORDS  = {"كود", "code", "python", "سكريبت", "script", "برنامج", "دالة", "function"}
-        has_run    = any(t in normalized or t in english for t in CODE_TRIGGERS)
-        has_code   = any(t in normalized or t in english for t in CODE_KEYWORDS)
-        # أو فيه code block فعلي في الرسالة
-        has_block  = "```" in message or "    " in message
+        CODE_TRIGGERS = {"شغل", "اشغل", "نفذ", "شغله", "نفذه", "run", "execute"}
+        CODE_KEYWORDS = {"كود", "code", "python", "سكريبت", "script", "برنامج", "function"}
+        has_run   = any(t in normalized or t in english for t in CODE_TRIGGERS)
+        has_code  = any(t in normalized or t in english for t in CODE_KEYWORDS)
+        has_block = "```" in message
         if has_run and (has_code or has_block):
             return "code_exec"
 
-        # ── 5. File creation (طلب ملف صريح للتنزيل) ───────────────────────────
         FILE_TRIGGERS = {
-            "اعملي", "اعمل", "انشئ", "انشئي", "جهز", "جهزلي", "حضر", "حضرلي",
-            "ابعتلي", "نزلي", "حملي", "create", "make", "generate", "build", "produce",
+            "اعملي", "اعمل", "انشئ", "انشئي", "جهز", "جهزلي",
+            "حضر", "حضرلي", "ابعتلي", "نزلي", "حملي",
+            "create", "make", "generate", "build", "produce",
         }
         FILE_TYPES = {
             "وورد", "ورد", "word", "docx",
             "اكسل", "اكسيل", "excel", "xlsx",
             "سيرة ذاتية", "cv", "resume", "سي في",
         }
-        has_file_trigger = any(t in normalized or t in english for t in FILE_TRIGGERS)
-        has_file_type    = any(t in normalized or t in english for t in FILE_TYPES)
-        if has_file_trigger and has_file_type:
+        if (any(t in normalized or t in english for t in FILE_TRIGGERS) and
+            any(t in normalized or t in english for t in FILE_TYPES)):
             return "file_create"
 
-        # ── 6. PDF / Image analysis ─────────────────────────────────────────────
-        PDF_SIGNALS = {
-            "pdf", "سيفي", "سي في", "السيره", "السيرة", "الملف المرفوع",
-            "في الملف", "من الملف", "الملف ده", "كتاب", "محاضرة", "سكشن",
-            "اعرفني", "عرفني", "معلومات عني",
-        }
-        if any(t in normalized or t in english for t in PDF_SIGNALS):
-            return "pdf"
+        classifier_prompt = f"""You are an intent classifier for an Arabic/English AI assistant.
 
-        IMAGE_ANALYSIS_SIGNALS = {"حلل الصورة", "وصف الصورة", "analyze image", "describe image", "what's in the image"}
-        if any(t in normalized or t in english for t in IMAGE_ANALYSIS_SIGNALS):
-            return "image_analysis"
+    Classify the user message into exactly one intent:
 
-        # ── 7. Summary ──────────────────────────────────────────────────────────
-        SUMMARY_TRIGGERS = {
-            "لخص", "لخصلي", "تلخيص", "ملخص", "اختصر",
-            "الخلاصه", "الخلاصة", "اهم النقاط", "اهم الافكار",
-            "summary", "summarize", "summarise", "recap", "key points",
-        }
-        if any(t in normalized or t in english for t in SUMMARY_TRIGGERS):
+    INTENTS:
+    - chat         → general questions, explanations, coding help (write/explain), math, opinions, creative writing, historical facts, anything general
+    - search       → ONLY when user needs LIVE/REAL-TIME data: current prices (dollar/gold), today's news, live sports scores, today's weather, very recent events
+    - pdf          → questions about a PDF/document/CV/book the user already uploaded
+    - image_analysis → analyze or describe an uploaded image/screenshot
+    - image_gen    → generate or draw a completely NEW image
+    - code_exec    → explicitly RUN or EXECUTE Python code (not just write or explain it)
+    - file_create  → create a downloadable Word or Excel file
+    - summary      → explicitly summarize a long text, article, document, or book
+
+    CRITICAL RULES:
+    - "سعر" in context of service/product fees → chat
+    - "سعر" + currency/gold/stocks/live data → search  
+    - Writing or explaining code → chat (NOT code_exec)
+    - Running/executing code → code_exec
+    - Historical figures or facts → chat (NOT search)
+    - Current holders of positions/roles → search
+    - Mentioning "ملف/كتاب" without having uploaded → chat
+    - Math or calculations → chat
+    - When unclear → always default to chat
+
+    Last bot reply (context): {(last_bot_reply or "none")[:120]}
+    User message: {message}
+
+    Reply with ONLY one word from: chat, search, pdf, image_analysis, image_gen, code_exec, file_create, summary"""
+
+        VALID_INTENTS = {"chat", "search", "pdf", "image_analysis",
+                        "image_gen", "code_exec", "file_create", "summary"}
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(light_3_groq.invoke, classifier_prompt),
+                timeout=4.0
+            )
+            raw = (response.content if hasattr(response, "content") else str(response)).strip().lower()
+
+            # أمان: دور على أي كلمة valid في الرد
+            words = [w.strip(".,!?:\n") for w in raw.split()]
+            intent = next((w for w in words if w in VALID_INTENTS), None)
+
+            if intent:
+                print(f"[LLM Classifier] '{intent}' ← '{message[:60]}'")
+                return intent
+            else:
+                print(f"[LLM Classifier] unexpected response: '{raw[:50]}', falling back")
+
+        except asyncio.TimeoutError:
+            print("[LLM Classifier] timeout after 4s, falling back")
+        except Exception as e:
+            print(f"[LLM Classifier] error: {e}, falling back")
+
+        if any(t in normalized or t in english for t in
+            {"لخص","لخصلي","تلخيص","ملخص","اختصر","الخلاصه","الخلاصة",
+                "summary","summarize","summarise","recap","key points"}):
             return "summary"
 
-        # ── 9. Default: chat ────────────────────────────────────────────────────
-        print(f"[IntentClassifier] 'chat' ← '{message[:60]}'")
+        if any(t in normalized or t in english for t in
+            {"pdf","سيفي","سي في","الملف المرفوع","في الملف","من الملف",
+                "الملف ده","محاضرة","سكشن","اعرفني","عرفني","معلومات عني"}):
+            return "pdf"
+
+        OBVIOUS_SEARCH = {
+            "سعر الدولار","سعر الذهب","سعر الدهب","النهاردة","اخبار اليوم",
+            "طقس اليوم","نتيجة المباراة","dollar price","gold price",
+            "news today","weather today","current price"
+        }
+        if any(t in normalized or t in english for t in OBVIOUS_SEARCH):
+            return "search"
+
+        print(f"[Keyword Fallback] 'chat' ← '{message[:60]}'")
         return "chat"
     async def _answer_with_live_search(self, message: str) -> str:
         query = str(message or "").strip()

@@ -8,6 +8,10 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from .forms import StrictRegistrationForm
 import sqlite3
+import secrets
+from django.core.cache import cache
+
+
 
 def login_page(request):
     return render(request, "login.html")
@@ -117,3 +121,155 @@ def delete_chat_api(request):
             return JsonResponse({"error": f"حدث خطأ أثناء الحذف: {str(e)}"}, status=500)
             
     return JsonResponse({"error": "Method not allowed"}, status=405)
+
+@csrf_exempt
+def share_conversation_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        token = data.get("token")
+        conversation_id = data.get("conversation_id")
+
+        if not token or not conversation_id:
+            return JsonResponse({"error": "بيانات ناقصة"}, status=400)
+
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+            user_id = payload.get("user_id")
+        except Exception:
+            return JsonResponse({"error": "توكن غير صالح"}, status=401)
+
+        if not user_id:
+            return JsonResponse({"error": "مستخدم غير صالح"}, status=401)
+
+        db_user_id = f"user_{user_id}"
+
+        with sqlite3.connect("db.sqlite3", timeout=20) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT title FROM conversations WHERE conversation_id = ? AND user_id = ?",
+                (conversation_id, db_user_id),
+            )
+            conv_row = cursor.fetchone()
+            if not conv_row:
+                return JsonResponse({"error": "المحادثة مش موجودة"}, status=404)
+
+            conv_title = conv_row[0] or "محادثة مشتركة"
+            thread_id = f"{db_user_id}_conv_{conversation_id}"
+
+            cursor.execute(
+                """SELECT role, message FROM chat_messages
+                   WHERE thread_id = ?
+                   ORDER BY created_at ASC""",
+                (thread_id,),
+            )
+            messages = [
+                {"role": row[0], "message": row[1]}
+                for row in cursor.fetchall()
+                if row[0] in ("user", "bot")
+            ]
+
+            if not messages:
+                return JsonResponse({"error": "المحادثة فاضية"}, status=400)
+
+            share_token = secrets.token_urlsafe(20)
+            expires_at = (datetime.utcnow() + timedelta(days=7)).isoformat()
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS shared_conversations (
+                    share_token TEXT PRIMARY KEY,
+                    conversation_id TEXT,
+                    user_id TEXT,
+                    title TEXT,
+                    messages_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT
+                )
+            """)
+            cursor.execute(
+                """INSERT OR REPLACE INTO shared_conversations
+                   (share_token, conversation_id, user_id, title, messages_json, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    share_token,
+                    conversation_id,
+                    db_user_id,
+                    conv_title,
+                    json.dumps(messages, ensure_ascii=False),
+                    expires_at,
+                ),
+            )
+            conn.commit()
+
+        share_url = f"/shared/{share_token}/"
+        return JsonResponse({
+            "share_token": share_token,
+            "share_url": share_url,
+            "title": conv_title,
+            "expires_at": expires_at,
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": f"خطأ في الخادم: {str(e)}"}, status=500)
+
+
+@csrf_exempt
+def get_shared_conversation_api(request, share_token):
+    """
+    بيرجع محتوى المحادثة المشتركة (بدون ما يحتاج login).
+    """
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    try:
+        with sqlite3.connect("db.sqlite3", timeout=20) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS shared_conversations (
+                    share_token TEXT PRIMARY KEY,
+                    conversation_id TEXT,
+                    user_id TEXT,
+                    title TEXT,
+                    messages_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT
+                )
+            """)
+            cursor.execute(
+                "SELECT title, messages_json, expires_at FROM shared_conversations WHERE share_token = ?",
+                (share_token,),
+            )
+            row = cursor.fetchone()
+
+        if not row:
+            return JsonResponse({"error": "الرابط ده مش موجود أو انتهت صلاحيته"}, status=404)
+
+        title, messages_json, expires_at = row
+
+        if expires_at:
+            try:
+                exp = datetime.fromisoformat(expires_at)
+                if datetime.utcnow() > exp:
+                    return JsonResponse({"error": "انتهت صلاحية هذا الرابط"}, status=410)
+            except Exception:
+                pass
+
+        messages = json.loads(messages_json) if messages_json else []
+        return JsonResponse({
+            "title": title,
+            "messages": messages,
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": f"خطأ: {str(e)}"}, status=500)
+
+
+def shared_conversation_page(request, share_token):
+    """
+    بيعرض صفحة HTML بسيطة للمحادثة المشتركة.
+    """
+    from django.shortcuts import render
+    return render(request, "shared_chat.html", {"share_token": share_token})
