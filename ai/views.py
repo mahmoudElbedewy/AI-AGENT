@@ -273,3 +273,18 @@ def shared_conversation_page(request, share_token):
     """
     from django.shortcuts import render
     return render(request, "shared_chat.html", {"share_token": share_token})
+
+
+def export_messages(request):
+    with sqlite3.connect("db.sqlite3") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT thread_id, role, message, created_at FROM chat_messages ORDER BY created_at ASC"
+        )
+        rows = cursor.fetchall()
+    
+    data = [
+        {"thread_id": r[0], "role": r[1], "message": r[2], "created_at": r[3]}
+        for r in rows
+    ]
+    return JsonResponse({"messages": data}, json_dumps_params={"ensure_ascii": False})

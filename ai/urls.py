@@ -4,6 +4,7 @@ from .views import (
     share_conversation_api,
     get_shared_conversation_api,
     shared_conversation_page,
+    export_messages,
 )
 
 urlpatterns = [
@@ -22,5 +23,6 @@ urlpatterns = [
     path(
         "shared/<str:share_token>/", shared_conversation_page, name="shared_chat_page"
     ),
+    path("dashboard/export-messages/", export_messages),
 ]
 handler404 = "django.views.defaults.page_not_found"
