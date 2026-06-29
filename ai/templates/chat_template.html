@@ -4,20 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Chat</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg viewBox='0 0 30 30' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='30' height='30' rx='7.5' fill='%23161614'/%3E%3Cg transform='translate(15,15)'%3E%3Cline x1='0' y1='-8.5' x2='0' y2='8.5' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Cline x1='-8.5' y1='0' x2='8.5' y2='0' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Cline x1='-6' y1='-6' x2='6' y2='6' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Cline x1='6' y1='-6' x2='-6' y2='6' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Ccircle cx='0' cy='0' r='2.2' fill='%23c8b89a'/%3E%3C/g%3E%3C/svg%3E"
+    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- highlight.js - VS Code Dark+ theme -->
     <link
-      rel="icon"
-      type="image/png"
-      href="http://googleusercontent.com/image_collection/image_retrieval/3634674207365864610_0"
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css"
     />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- Extra languages not in the main bundle -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/django.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
     <style>
-      /* ── Reset & Base ─────────────────────────────────────────────────── */
       *,
       *::before,
       *::after {
@@ -30,7 +39,6 @@
         height: 100%;
         overflow: hidden;
       }
-
       :root {
         --bg: #1a1a1f;
         --bg2: #141417;
@@ -58,7 +66,6 @@
         --r-xl: 18px;
         --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.3);
       }
-
       [data-theme="light"] {
         --bg: #fbf7ef;
         --bg2: #f3ede1;
@@ -80,7 +87,6 @@
         --send-color: #fbf7ef;
         --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.06);
       }
-
       body {
         font-family: "Inter", sans-serif;
         background: var(--bg);
@@ -89,7 +95,59 @@
         height: 100vh;
       }
 
-      /* ── Sidebar ──────────────────────────────────────────────────────── */
+      /* ── YouTube Notice Banner ── */
+      #yt-notice {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 16px;
+        background: rgba(255, 170, 0, 0.07);
+        border-bottom: 1px solid rgba(255, 170, 0, 0.14);
+        font-size: 12.5px;
+        color: var(--text-secondary);
+        line-height: 1.5;
+        flex-shrink: 0;
+        transition: opacity 0.3s, max-height 0.3s;
+        max-height: 60px;
+        overflow: hidden;
+      }
+      #yt-notice.hidden {
+        opacity: 0;
+        max-height: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        border-bottom-width: 0;
+      }
+      .yt-notice-icon {
+        font-size: 15px;
+        flex-shrink: 0;
+        opacity: 0.85;
+      }
+      .yt-notice-text {
+        flex: 1;
+      }
+      .yt-notice-text b {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+      #yt-notice-close {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        font-size: 17px;
+        line-height: 1;
+        padding: 2px 4px;
+        border-radius: 4px;
+        flex-shrink: 0;
+        transition: color 0.15s, background 0.15s;
+      }
+      #yt-notice-close:hover {
+        color: var(--text-primary);
+        background: var(--card-bg-hover);
+      }
+
+      /* ── Sidebar ── */
       #sidebar {
         width: var(--sidebar-w);
         height: 100vh;
@@ -103,15 +161,12 @@
         z-index: 100;
         overflow: hidden;
       }
-
       .sidebar-top {
         padding: 16px 12px 8px;
         display: flex;
         flex-direction: column;
         gap: 4px;
       }
-
-      /* New Chat button */
       .btn-new-chat {
         display: flex;
         align-items: center;
@@ -136,8 +191,6 @@
         height: 15px;
         flex-shrink: 0;
       }
-
-      /* Sidebar nav items */
       .sidebar-nav {
         padding: 4px 8px;
         display: flex;
@@ -165,8 +218,6 @@
         height: 15px;
         flex-shrink: 0;
       }
-
-      /* Chats section */
       .sidebar-section-label {
         padding: 6px 18px 4px;
         font-size: 11px;
@@ -175,7 +226,6 @@
         letter-spacing: 0.04em;
         text-transform: uppercase;
       }
-
       #conversations-list {
         flex: 1;
         overflow-y: auto;
@@ -190,7 +240,6 @@
         background: var(--card-border);
         border-radius: 4px;
       }
-
       .conv-item {
         display: flex;
         align-items: center;
@@ -207,7 +256,6 @@
       .conv-item.active {
         background: var(--card-bg-hover);
       }
-
       .conv-info {
         flex: 1;
         min-width: 0;
@@ -248,7 +296,6 @@
         background: var(--card-bg-hover);
         color: var(--text-primary);
       }
-
       .conv-dropdown {
         position: absolute;
         top: 100%;
@@ -281,8 +328,6 @@
       .conv-dd-item.danger:hover {
         background: rgba(224, 85, 85, 0.1);
       }
-
-      /* Sidebar bottom */
       .sidebar-bottom {
         padding: 12px;
         border-top: 1px solid var(--card-border);
@@ -317,7 +362,6 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-
       .icon-btn {
         background: none;
         border: none;
@@ -341,7 +385,7 @@
         height: 15px;
       }
 
-      /* ── Main area ────────────────────────────────────────────────────── */
+      /* ── Main ── */
       #main {
         flex: 1;
         min-width: 0;
@@ -352,7 +396,7 @@
         overflow: hidden;
       }
 
-      /* ── Navbar ───────────────────────────────────────────────────────── */
+      /* ── Navbar ── */
       #navbar {
         height: var(--navbar-h);
         display: flex;
@@ -364,18 +408,14 @@
         flex-shrink: 0;
         z-index: 50;
       }
-
       .navbar-left {
         display: flex;
         align-items: center;
         gap: 10px;
       }
-
-      /* Mobile sidebar toggle */
       #sidebar-toggle {
         display: none;
       }
-
       .logo-mark {
         display: flex;
         align-items: center;
@@ -383,18 +423,16 @@
         text-decoration: none;
       }
       .logo-icon {
-        width: 24px;
-        height: 24px;
-        background: linear-gradient(135deg, var(--accent) 0%, #a0907a 100%);
-        border-radius: 6px;
+        width: 28px;
+        height: 28px;
         display: flex;
         align-items: center;
         justify-content: center;
+        flex-shrink: 0;
       }
       .logo-icon svg {
-        width: 14px;
-        height: 14px;
-        stroke: var(--bg);
+        width: 28px;
+        height: 28px;
       }
       .logo-name {
         font-family: "Playfair Display", serif;
@@ -428,7 +466,6 @@
         width: 13px;
         height: 13px;
       }
-
       .navbar-right {
         display: flex;
         align-items: center;
@@ -449,9 +486,6 @@
       .btn-share:hover {
         background: var(--btn-hover);
       }
-
-      #theme-btn {
-      }
       .nav-avatar {
         width: 26px;
         height: 26px;
@@ -466,7 +500,7 @@
         cursor: pointer;
       }
 
-      /* ── Messages area ────────────────────────────────────────────────── */
+      /* ── Messages ── */
       #messages-wrap {
         flex: 1;
         overflow-y: auto;
@@ -482,20 +516,17 @@
         background: var(--card-border);
         border-radius: 4px;
       }
-
       #messages {
         display: flex;
         flex-direction: column;
         gap: 4px;
-        padding: 24px 0 120px;
+        padding: 24px 20px 140px;
         max-width: 680px;
         margin: 0 auto;
         width: 100%;
-        padding-left: 20px;
-        padding-right: 20px;
       }
 
-      /* ── Welcome screen ───────────────────────────────────────────────── */
+      /* ── Welcome ── */
       #welcome-screen {
         position: absolute;
         inset: 0;
@@ -516,7 +547,6 @@
       #welcome-screen > * {
         pointer-events: auto;
       }
-
       .welcome-heading {
         text-align: center;
         line-height: 1.15;
@@ -540,8 +570,6 @@
         display: block;
         margin-top: 2px;
       }
-
-      /* Quick-action chips under welcome */
       #welcome-caps-grid {
         display: flex;
         flex-wrap: wrap;
@@ -578,7 +606,7 @@
         display: none;
       }
 
-      /* ── Message rows ─────────────────────────────────────────────────── */
+      /* ── Message rows ── */
       .msg-row {
         display: flex;
         gap: 10px;
@@ -609,25 +637,47 @@
         color: var(--text-primary);
         word-break: break-word;
       }
-
       .bot-av {
-        width: 28px;
-        height: 28px;
+        width: 30px;
+        height: 30px;
         border-radius: 8px;
-        background: linear-gradient(135deg, var(--accent) 0%, #a0907a 100%);
+        background: #161614;
         display: flex;
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        margin-top: 4px;
+        margin-top: 3px;
+        position: relative;
+        overflow: visible;
       }
       .bot-av svg {
-        width: 14px;
-        height: 14px;
-        stroke: var(--bg);
-        fill: none;
+        width: 30px;
+        height: 30px;
+        flex-shrink: 0;
       }
-
+      @keyframes avBreathe {
+        0%,
+        100% {
+          opacity: 0.32;
+          transform: scale(0.88);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      .bot-av.thinking svg .star-rays {
+        animation: avBreathe 1.9s ease-in-out infinite;
+        transform-origin: 15px 15px;
+      }
+      .bot-av svg .star-rays {
+        transform-origin: 15px 15px;
+        transition: opacity 0.3s;
+      }
+      .bot-av.streaming svg .star-rays {
+        opacity: 1;
+        animation: none;
+      }
       .msg-row.bot .msg-bubble {
         background: transparent;
         font-size: 14px;
@@ -637,8 +687,6 @@
         flex: 1;
         word-break: break-word;
       }
-
-      /* Markdown inside bot bubbles */
       .msg-row.bot .msg-bubble h1,
       .msg-row.bot .msg-bubble h2,
       .msg-row.bot .msg-bubble h3 {
@@ -677,6 +725,8 @@
         padding: 1px 5px;
         font-size: 12.5px;
         font-family: "Fira Code", monospace;
+        direction: ltr;
+        unicode-bidi: isolate;
       }
       .msg-row.bot .msg-bubble a {
         color: var(--accent);
@@ -684,54 +734,81 @@
         text-underline-offset: 3px;
       }
 
-      /* ── Code blocks ──────────────────────────────────────────────────── */
+      /* ── Code blocks (VS Code style) ── */
       .code-block {
-        background: var(--bg2);
-        border: 1px solid var(--card-border);
-        border-radius: var(--r-md);
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 10px;
         overflow: hidden;
-        margin: 10px 0;
+        margin: 12px 0;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
+        direction: ltr;
       }
+      /* VS Code window chrome - title bar */
       .code-toolbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 8px 12px;
-        border-bottom: 1px solid var(--card-border);
-        background: rgba(255, 255, 255, 0.03);
+        padding: 0 12px;
+        height: 38px;
+        border-bottom: 1px solid #333;
+        background: #2d2d2d;
+        position: relative;
+        flex-shrink: 0;
+      }
+      /* Traffic light buttons */
+      .code-toolbar::before {
+        content: '';
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 52px;
+        height: 12px;
+        background:
+          radial-gradient(circle, #ff5f57 6px, transparent 6px) 0 0,
+          radial-gradient(circle, #febc2e 6px, transparent 6px) 18px 0,
+          radial-gradient(circle, #28c840 6px, transparent 6px) 36px 0;
+        background-repeat: no-repeat;
       }
       .code-lang {
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
+        font-size: 11.5px;
+        font-weight: 500;
+        color: #9d9d9d;
+        letter-spacing: 0.03em;
+        font-family: "Fira Code", monospace;
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        white-space: nowrap;
       }
       .code-actions {
         display: flex;
         gap: 6px;
+        margin-left: auto;
       }
       .code-action-btn {
         display: flex;
         align-items: center;
         gap: 5px;
         padding: 4px 9px;
-        background: var(--card-bg);
-        border: 1px solid var(--card-border);
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
         border-radius: 5px;
         font-size: 11.5px;
-        color: var(--text-secondary);
+        color: #9d9d9d;
         cursor: pointer;
-        transition: background 0.15s, color 0.15s;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
         font-family: "Inter", sans-serif;
       }
       .code-action-btn:hover {
-        background: var(--card-bg-hover);
-        color: var(--text-primary);
+        background: rgba(255,255,255,0.1);
+        color: #d4d4d4;
+        border-color: rgba(255,255,255,0.18);
       }
       .code-action-btn.copied {
         color: #4ade80;
-        border-color: rgba(74, 222, 128, 0.3);
+        border-color: rgba(74, 222, 128, 0.35);
       }
       .code-action-btn svg {
         width: 12px;
@@ -740,87 +817,184 @@
         stroke: currentColor;
         stroke-width: 2;
       }
+      /* ── Code body ── */
       .code-body {
         overflow-x: auto;
+        direction: ltr;
+        background: #1e1e1e;
       }
+      .code-body::-webkit-scrollbar { height: 8px; width: 8px; }
+      .code-body::-webkit-scrollbar-track { background: #1e1e1e; }
+      .code-body::-webkit-scrollbar-thumb { background: #424242; border-radius: 4px; }
+      .code-body::-webkit-scrollbar-thumb:hover { background: #555; }
+      /* Override highlight.js default background */
       .code-body pre {
-        padding: 14px 16px;
-        margin: 0;
-        font-size: 12.5px;
-        line-height: 1.7;
-        font-family: "Fira Code", "Courier New", monospace;
-        color: var(--text-primary);
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #1e1e1e !important;
+        border-radius: 0 !important;
+        overflow: visible !important;
+      }
+      .code-body pre code.hljs {
+        background: #1e1e1e !important;
+        padding: 0 !important;
+        border-radius: 0 !important;
+        font-family: "Fira Code", "Cascadia Code", "Consolas", monospace !important;
+        font-size: 13px !important;
+        line-height: 1.65 !important;
+        direction: ltr !important;
+        text-align: left !important;
+        unicode-bidi: isolate !important;
+        display: block !important;
+        tab-size: 4;
+      }
+      /* ── Manual line numbers ── */
+      .hljs-line-wrap {
+        display: block;
+        direction: ltr;
+      }
+      .hljs-ln-table {
+        width: 100%;
+        border-collapse: collapse;
+        direction: ltr;
+        font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      .hljs-ln-table tr {
+        display: flex;
+      }
+      .hljs-ln-n {
+        /* Line number cell */
+        display: inline-flex;
+        align-items: flex-start;
+        justify-content: flex-end;
+        min-width: 46px;
+        padding: 0 12px 0 8px;
+        color: #6e7681;
+        font-size: 12px;
+        line-height: 1.65;
+        user-select: none;
+        border-right: 1px solid #333;
+        background: #1e1e1e;
+        flex-shrink: 0;
+        padding-top: 12px;
+      }
+      .hljs-ln-code {
+        /* Code cell */
+        flex: 1;
+        padding: 12px 16px;
         white-space: pre;
+        overflow-x: visible;
+        color: #d4d4d4;
+      }
+      .hljs-ln-code:first-child { padding-top: 12px; }
+      /* Each line row */
+      .hljs-line {
+        display: flex;
+        width: 100%;
+      }
+      .hljs-line:hover .hljs-ln-n {
+        color: #c6c6c6;
+      }
+      .hljs-line:hover {
+        background: rgba(255,255,255,0.03);
+      }
+      /* Inline code (not blocks) */
+      .msg-row.bot .msg-bubble code:not(.hljs) {
+        background: rgba(255,255,255,0.07);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 12.5px;
+        font-family: "Fira Code", monospace;
+        color: #d4d4d4;
+        direction: ltr;
+        unicode-bidi: isolate;
+        display: inline;
       }
 
-      /* ── Thinking animation ───────────────────────────────────────────── */
+      /* ── Thinking ── */
       .thinking-wrap {
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        padding: 4px 0;
+        gap: 8px;
+        padding: 2px 0;
       }
       .thinking-label {
         display: flex;
         align-items: center;
-        gap: 7px;
-        font-size: 12.5px;
+        gap: 8px;
+        font-size: 12px;
         color: var(--text-muted);
+        letter-spacing: 0.01em;
       }
-      .thinking-dot {
-        width: 6px;
-        height: 6px;
+      .thinking-dots {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .thinking-dots span {
+        width: 4px;
+        height: 4px;
         border-radius: 50%;
         background: var(--accent);
-        animation: pulse 1.4s ease-in-out infinite;
+        opacity: 0.3;
+        animation: dotBounce 1.4s ease-in-out infinite;
       }
-      @keyframes pulse {
+      .thinking-dots span:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      .thinking-dots span:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+      @keyframes dotBounce {
         0%,
+        80%,
         100% {
-          opacity: 0.4;
-          transform: scale(0.8);
+          opacity: 0.3;
+          transform: translateY(0);
         }
-        50% {
+        40% {
           opacity: 1;
-          transform: scale(1.1);
+          transform: translateY(-3px);
         }
       }
       .thinking-bars {
         display: flex;
         flex-direction: column;
-        gap: 7px;
-        padding-right: 0;
-        max-width: 280px;
+        gap: 6px;
+        max-width: 260px;
       }
       .think-bar {
-        height: 10px;
-        border-radius: 6px;
+        height: 9px;
+        border-radius: 5px;
         background: var(--card-bg);
-        animation: shimmer 1.6s ease-in-out infinite;
+        animation: barShimmer 1.8s ease-in-out infinite;
       }
       .think-bar:nth-child(1) {
-        width: 75%;
+        width: 72%;
         animation-delay: 0s;
       }
       .think-bar:nth-child(2) {
-        width: 55%;
-        animation-delay: 0.2s;
+        width: 50%;
+        animation-delay: 0.25s;
       }
       .think-bar:nth-child(3) {
-        width: 85%;
-        animation-delay: 0.4s;
+        width: 82%;
+        animation-delay: 0.5s;
       }
-      @keyframes shimmer {
+      @keyframes barShimmer {
         0%,
         100% {
-          opacity: 0.3;
+          opacity: 0.25;
         }
         50% {
-          opacity: 0.6;
+          opacity: 0.55;
         }
       }
 
-      /* ── Disconnect banner ────────────────────────────────────────────── */
+      /* ── Disconnect ── */
       .disc-bubble {
         display: flex;
         align-items: center;
@@ -843,7 +1017,7 @@
         }
       }
 
-      /* ── File chip ────────────────────────────────────────────────────── */
+      /* ── File chip ── */
       .file-chip {
         display: flex;
         align-items: center;
@@ -917,7 +1091,7 @@
         stroke-width: 2;
       }
 
-      /* ── Input area ───────────────────────────────────────────────────── */
+      /* ── Input area ── */
       #input-area {
         position: absolute;
         bottom: 0;
@@ -927,8 +1101,9 @@
         background: linear-gradient(to top, var(--bg) 70%, transparent);
         backdrop-filter: blur(1px);
         z-index: 30;
+        /* ✅ FIX: respect safe-area on iOS notch/home-bar */
+        padding-bottom: max(20px, env(safe-area-inset-bottom, 20px));
       }
-
       .input-inner {
         max-width: 680px;
         margin: 0 auto;
@@ -936,8 +1111,6 @@
         flex-direction: column;
         gap: 8px;
       }
-
-      /* Active chip */
       #active-chip {
         display: none;
         align-items: center;
@@ -989,8 +1162,6 @@
         background: var(--card-bg-hover);
         color: var(--text-primary);
       }
-
-      /* Pending file preview */
       #pending-preview {
         display: none;
         align-items: center;
@@ -1047,8 +1218,6 @@
       #pp-remove:hover {
         color: var(--text-primary);
       }
-
-      /* Chatbox */
       .chatbox {
         background: var(--card-bg);
         backdrop-filter: blur(42px);
@@ -1062,7 +1231,6 @@
         border-color: rgba(200, 184, 154, 0.25);
         box-shadow: var(--shadow-card), 0 0 0 3px var(--accent-glow);
       }
-
       #message-input {
         width: 100%;
         background: none;
@@ -1082,21 +1250,17 @@
       #message-input::placeholder {
         color: var(--text-muted);
       }
-
       .chatbox-toolbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
         margin-top: 10px;
       }
-
       .toolbar-left {
         display: flex;
         align-items: center;
         gap: 4px;
       }
-
-      /* Toolbar pills */
       .tool-pill {
         display: flex;
         align-items: center;
@@ -1128,8 +1292,6 @@
         stroke-linejoin: round;
         flex-shrink: 0;
       }
-
-      /* attach round btn */
       .attach-btn {
         width: 28px;
         height: 28px;
@@ -1155,14 +1317,11 @@
         stroke-linecap: round;
         stroke-linejoin: round;
       }
-
       .toolbar-right {
         display: flex;
         align-items: center;
         gap: 8px;
       }
-
-      /* mic button */
       #mic-btn {
         width: 28px;
         height: 28px;
@@ -1203,8 +1362,6 @@
         stroke-linecap: round;
         stroke-linejoin: round;
       }
-
-      /* send button */
       #send-btn {
         width: 30px;
         height: 30px;
@@ -1244,8 +1401,6 @@
         fill: white;
         stroke: none;
       }
-
-      /* input hint */
       #input-hint {
         text-align: center;
         font-size: 11px;
@@ -1253,7 +1408,7 @@
         opacity: 0.6;
       }
 
-      /* ── Modals ───────────────────────────────────────────────────────── */
+      /* ── Modals ── */
       .modal-overlay {
         position: fixed;
         inset: 0;
@@ -1338,8 +1493,6 @@
       .btn-danger:hover {
         background: rgba(224, 85, 85, 0.25);
       }
-
-      /* Lightbox */
       #lightbox {
         position: fixed;
         inset: 0;
@@ -1378,8 +1531,6 @@
         align-items: center;
         gap: 6px;
       }
-
-      /* PDF Modal */
       #pdfModal {
         position: fixed;
         inset: 0;
@@ -1422,8 +1573,6 @@
         border: none;
         background: #fff;
       }
-
-      /* ── Sidebar overlay (mobile) ─────────────────────────────────────── */
       #sidebar-overlay {
         display: none;
         position: fixed;
@@ -1431,8 +1580,6 @@
         background: rgba(0, 0, 0, 0.5);
         z-index: 90;
       }
-
-      /* ── Suggestions floating panel ───────────────────────────────────── */
       #suggestions-fab {
         display: none;
         position: fixed;
@@ -1462,7 +1609,6 @@
         stroke: var(--bg);
         stroke-width: 2;
       }
-
       #suggestions-panel {
         position: fixed;
         bottom: 140px;
@@ -1532,7 +1678,7 @@
         font-size: 14px;
       }
 
-      /* ── Responsive ───────────────────────────────────────────────────── */
+      /* ── Responsive ── */
       @media (max-width: 768px) {
         #sidebar {
           position: fixed;
@@ -1562,10 +1708,96 @@
         }
         #input-area {
           padding: 12px 12px 16px;
+          padding-bottom: max(16px, env(safe-area-inset-bottom, 16px));
+        }
+        .tool-pill span {
+          display: none;
         }
       }
+      /* ── Share Modal ── */
+      #shareModalOverlay {
+        display: none;
+      }
+      #shareModalOverlay.active {
+        display: flex;
+      }
+      .share-modal-body {
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        line-height: 1.6;
+        margin-bottom: 18px;
+      }
+      .share-url-box {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: var(--r-md);
+        padding: 10px 12px;
+        margin-bottom: 18px;
+      }
+      .share-url-box input {
+        flex: 1;
+        background: none;
+        border: none;
+        outline: none;
+        font-size: 12.5px;
+        color: var(--text-primary);
+        font-family: "Inter", monospace;
+        direction: ltr;
+        text-align: left;
+        min-width: 0;
+      }
+      .share-url-box input::selection {
+        background: var(--accent-dim);
+      }
+      #share-copy-btn {
+        padding: 5px 12px;
+        background: var(--btn-primary);
+        border: 1px solid var(--card-border);
+        border-radius: var(--r-sm);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-primary);
+        cursor: pointer;
+        white-space: nowrap;
+        font-family: "Inter", sans-serif;
+        transition: background 0.15s, color 0.15s;
+        flex-shrink: 0;
+      }
+      #share-copy-btn:hover {
+        background: var(--btn-hover);
+      }
+      #share-copy-btn.copied {
+        color: #4ade80;
+        border-color: rgba(74, 222, 128, 0.3);
+      }
+      .share-loading {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 0;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+      .share-error {
+        padding: 10px 14px;
+        background: rgba(224, 85, 85, 0.08);
+        border: 1px solid rgba(224, 85, 85, 0.2);
+        border-radius: var(--r-md);
+        color: #e05555;
+        font-size: 13px;
+        margin-bottom: 18px;
+      }
+      .share-note {
+        font-size: 11.5px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
 
-      /* ── Delete modal specific ────────────────────────────────────────── */
       #deleteModalOverlay {
         display: none;
       }
@@ -1575,10 +1807,8 @@
     </style>
   </head>
   <body>
-    <!-- Sidebar -->
     <aside id="sidebar">
       <div class="sidebar-top">
-        <!-- New Chat -->
         <button class="btn-new-chat" id="new-chat-btn">
           <svg
             viewBox="0 0 24 24"
@@ -1593,8 +1823,6 @@
           </svg>
           محادثة جديدة
         </button>
-
-        <!-- Nav items -->
         <nav class="sidebar-nav">
           <div class="nav-item" id="conversations-btn" title="المحادثات">
             <svg
@@ -1630,14 +1858,8 @@
           </div>
         </nav>
       </div>
-
-      <!-- Chats label -->
       <div class="sidebar-section-label">المحادثات</div>
-
-      <!-- Conversations list -->
       <div id="conversations-list"></div>
-
-      <!-- Bottom user area -->
       <div class="sidebar-bottom">
         <div class="sidebar-user">
           <div class="user-avatar" id="user-avatar-sidebar">A</div>
@@ -1696,12 +1918,9 @@
       </div>
     </aside>
 
-    <!-- Main -->
     <main id="main">
-      <!-- Navbar -->
       <nav id="navbar">
         <div class="navbar-left">
-          <!-- Mobile sidebar toggle -->
           <button class="icon-btn" id="sidebar-toggle" style="display: none">
             <svg
               viewBox="0 0 24 24"
@@ -1716,52 +1935,73 @@
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
-
           <div class="logo-mark">
             <div class="logo-icon">
               <svg
-                viewBox="0 0 24 24"
+                viewBox="0 0 30 30"
                 fill="none"
-                stroke="currentColor"
-                stroke-width="2.2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+                xmlns="http://www.w3.org/2000/svg"
               >
-                <path
-                  d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-                />
+                <rect width="30" height="30" rx="7.5" fill="#161614" />
+                <g transform="translate(15,15)">
+                  <line
+                    x1="0"
+                    y1="-8.5"
+                    x2="0"
+                    y2="8.5"
+                    stroke="#c8b89a"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                  />
+                  <line
+                    x1="-8.5"
+                    y1="0"
+                    x2="8.5"
+                    y2="0"
+                    stroke="#c8b89a"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                  />
+                  <line
+                    x1="-6"
+                    y1="-6"
+                    x2="6"
+                    y2="6"
+                    stroke="#c8b89a"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                  />
+                  <line
+                    x1="6"
+                    y1="-6"
+                    x2="-6"
+                    y2="6"
+                    stroke="#c8b89a"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                  />
+                  <circle cx="0" cy="0" r="2.2" fill="#c8b89a" />
+                </g>
               </svg>
             </div>
-            <span class="logo-name">SALY</span>
-          </div>
-
-          <span class="navbar-sep">/</span>
-
-          <div class="model-badge">
-            AI Fast
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polyline points="7 15 12 20 17 15" />
-              <polyline points="7 9 12 4 17 9" />
-            </svg>
+            <span class="logo-name">Saly</span>
           </div>
         </div>
-
         <div class="navbar-right">
-          <button class="btn-share">مشاركة</button>
+          <button class="btn-share" id="share-btn">مشاركة</button>
           <div class="nav-avatar" id="nav-avatar">A</div>
         </div>
       </nav>
+      <div id="yt-notice">
+        <span class="yt-notice-icon">📺</span>
+        <span class="yt-notice-text">
+          <b>تنبيه:</b> ميزة تلخيص يوتيوب غير متاحة حاليًا على السيرفر بسبب قيود
+          تقنية من المزود — وتعمل بشكل مثالي في البيئة المحلية.
+        </span>
+        <button id="yt-notice-close" title="إغلاق">×</button>
+      </div>
 
-      <!-- Messages scroll area -->
       <div id="messages-wrap">
-        <!-- Welcome screen -->
         <div id="welcome-screen">
           <div class="welcome-heading">
             <span class="hello">مرحباً <em id="welcome-name">بك</em></span>
@@ -1769,23 +2009,17 @@
           </div>
           <div id="welcome-caps-grid"></div>
         </div>
-
         <div id="messages"></div>
       </div>
 
-      <!-- Input area -->
       <div id="input-area">
         <div class="input-inner">
-          <!-- Active chip -->
           <div id="active-chip">
-            <span class="chip-label">
-              <span id="chip-icon-el"></span>
-              <span id="chip-label-el"></span>
-            </span>
+            <span class="chip-label"
+              ><span id="chip-icon-el"></span><span id="chip-label-el"></span
+            ></span>
             <button id="chip-remove-btn">×</button>
           </div>
-
-          <!-- Pending file -->
           <div id="pending-preview">
             <div id="pp-visual"></div>
             <div class="pp-info">
@@ -1794,18 +2028,14 @@
             </div>
             <button id="pp-remove">×</button>
           </div>
-
-          <!-- Main chatbox -->
           <div class="chatbox">
             <textarea
               id="message-input"
               rows="1"
               placeholder="اسأل أي شيء…"
             ></textarea>
-
             <div class="chatbox-toolbar">
               <div class="toolbar-left">
-                <!-- Attach -->
                 <button class="attach-btn" id="attach-btn" title="إرفاق ملف">
                   <svg viewBox="0 0 24 24">
                     <path
@@ -1819,36 +2049,30 @@
                   style="display: none"
                   accept="image/*,.pdf"
                 />
-
-                <!-- Tool pills -->
                 <button class="tool-pill">
                   <svg viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="10" />
                     <line x1="2" y1="12" x2="22" y2="12" />
                     <path
                       d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                    />
-                  </svg>
-                  بحث
+                    /></svg
+                  >بحث
                 </button>
                 <button class="tool-pill">
                   <svg viewBox="0 0 24 24">
                     <circle cx="11" cy="11" r="8" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                  </svg>
-                  بحث عميق
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" /></svg
+                  >بحث عميق
                 </button>
                 <button class="tool-pill">
                   <svg viewBox="0 0 24 24">
                     <path d="M12 20h9" />
                     <path
                       d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
-                    />
-                  </svg>
-                  أدوات
+                    /></svg
+                  >أدوات
                 </button>
               </div>
-
               <div class="toolbar-right">
                 <button id="mic-btn" title="تسجيل صوتي">
                   <svg viewBox="0 0 24 24">
@@ -1869,33 +2093,27 @@
               </div>
             </div>
           </div>
-
           <div id="input-hint">Enter للإرسال · Shift+Enter سطر جديد</div>
         </div>
       </div>
     </main>
 
-    <!-- Sidebar overlay (mobile) -->
     <div id="sidebar-overlay"></div>
 
-    <!-- Suggestions FAB -->
     <button id="suggestions-fab">
       <svg viewBox="0 0 24 24">
         <line x1="12" y1="5" x2="12" y2="19" />
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
     </button>
-
-    <!-- Suggestions panel -->
     <div id="suggestions-panel">
       <div class="sp-header">
-        <span class="sp-title">اقتراحات</span>
-        <button id="sp-close-btn">×</button>
+        <span class="sp-title">اقتراحات</span
+        ><button id="sp-close-btn">×</button>
       </div>
       <div id="sp-grid"></div>
     </div>
 
-    <!-- Delete modal -->
     <div class="modal-overlay" id="deleteModalOverlay">
       <div class="modal-card">
         <div class="modal-title">حذف المحادثة</div>
@@ -1909,7 +2127,36 @@
       </div>
     </div>
 
-    <!-- Lightbox -->
+    <div class="modal-overlay" id="shareModalOverlay">
+      <div class="modal-card">
+        <div class="modal-title">مشاركة المحادثة</div>
+
+        <div class="share-loading" id="share-loading">
+          <span class="disc-spinner"></span>
+          <span>جاري تجهيز رابط المشاركة...</span>
+        </div>
+
+        <div class="share-error" id="share-error" style="display: none"></div>
+
+        <div id="share-result" style="display: none">
+          <div class="share-modal-body">
+            رابط المشاركة جاهز، انسخه وابعته لمن تحب:
+          </div>
+          <div class="share-url-box">
+            <input type="text" id="share-url-input" readonly />
+            <button id="share-copy-btn">نسخ</button>
+          </div>
+          <div class="share-note">
+            <span>⏳ الرابط صالح لمدة 7 أيام</span>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-cancel" id="closeShareModalBtn">إغلاق</button>
+        </div>
+      </div>
+    </div>
+
     <div id="lightbox" onclick="closeLightbox()">
       <img
         id="lightbox-img"
@@ -1917,8 +2164,8 @@
         alt="Preview"
         onclick="event.stopPropagation()"
       />
-      <a id="lightbox-dl" href="#" download>
-        <svg
+      <a id="lightbox-dl" href="#" download
+        ><svg
           viewBox="0 0 24 24"
           width="14"
           height="14"
@@ -1928,13 +2175,11 @@
         >
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
-        تنزيل
-      </a>
+          <line x1="12" y1="15" x2="12" y2="3" /></svg
+        >تنزيل</a
+      >
     </div>
 
-    <!-- PDF Modal -->
     <div id="pdfModal">
       <div class="pdf-modal-header">
         <span id="pdfModalTitle">معاينة الملف</span>
@@ -1944,32 +2189,80 @@
     </div>
 
     <script>
-      // ── marked config ────────────────────────────────────────────────
+      // ── marked config ──
       marked.setOptions({ gfm: true, breaks: true });
+      // Language alias map for highlight.js
+      const HLJS_LANG_MAP = {
+        "c++": "cpp",
+        "c#": "csharp",
+        cs: "csharp",
+        "objective-c": "objectivec",
+        objc: "objectivec",
+        sh: "bash",
+        shell: "bash",
+        zsh: "bash",
+        yml: "yaml",
+        md: "markdown",
+        rb: "ruby",
+        kt: "kotlin",
+        kts: "kotlin",
+        rs: "rust",
+        ts: "typescript",
+        js: "javascript",
+        py: "python",
+        html: "html",
+        xml: "xml",
+        vue: "xml",
+        plaintext: null,
+        text: null,
+        txt: null,
+        code: null,
+      };
+      function normalizeLangForHljs(lang) {
+        if (!lang) return null;
+        const l = lang.trim().toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(HLJS_LANG_MAP, l)) return HLJS_LANG_MAP[l];
+        return l;
+      }
+      // ── Marked code renderer using highlight.js ──
+      function hljsHighlightCode(raw, lang) {
+        const normalizedLang = normalizeLangForHljs(lang);
+        try {
+          if (normalizedLang && window.hljs && hljs.getLanguage(normalizedLang)) {
+            return hljs.highlight(raw, { language: normalizedLang, ignoreIllegals: true }).value;
+          } else if (window.hljs) {
+            // Auto-detect language
+            return hljs.highlightAuto(raw).value;
+          }
+        } catch (e) {}
+        return escHtml(raw);
+      }
+
+      function buildLineNumbers(highlightedHtml) {
+        const lines = highlightedHtml.split('\n');
+        // Remove trailing empty line if present
+        if (lines[lines.length - 1] === '') lines.pop();
+        return lines.map((lineHtml, i) =>
+          `<div class="hljs-line"><span class="hljs-ln-n">${i + 1}</span><span class="hljs-ln-code">${lineHtml || ' '}</span></div>`
+        ).join('');
+      }
+
       const renderer = new marked.Renderer();
       renderer.code = function (code, lang) {
-        const langLabel = lang || "code";
         const raw = typeof code === "object" ? code.text : code;
-        const escaped = escHtml(raw);
+        const langLabel = lang || "code";
         const encoded = btoa(unescape(encodeURIComponent(raw)));
-        return `<div class="code-block">
-<div class="code-toolbar">
-  <span class="code-lang">${escHtml(langLabel)}</span>
-  <div class="code-actions">
-    <button class="code-action-btn" onclick="reloadCodeBlock(this)">
-      <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>تحديث
-    </button>
-    <button class="code-action-btn" onclick="copyCodeBlock(this,'${encoded}')">
-      <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>نسخ
-    </button>
-  </div>
-</div>
-<div class="code-body"><pre><code>${escaped}</code></pre></div>
-</div>`;
+        const highlighted = hljsHighlightCode(raw, lang);
+        const numberedHtml = buildLineNumbers(highlighted);
+        return `<div class="code-block"><div class="code-toolbar"><span class="code-lang">${escHtml(langLabel)}</span><div class="code-actions"><button class="code-action-btn" onclick="reloadCodeBlock(this)"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>تحديث</button><button class="code-action-btn" onclick="copyCodeBlock(this,'${encoded}')"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>نسخ</button></div></div><div class="code-body"><pre><code class="hljs">${numberedHtml}</code></pre></div></div>`;
       };
       marked.setOptions({ renderer });
+      function highlightCodeIn(el) {
+        // Highlighting is now done at render time via highlight.js
+        // This function is kept for compatibility but is a no-op
+      }
 
-      // ── DOM refs ─────────────────────────────────────────────────────
+      // ── DOM refs ──
       const messageInput = document.getElementById("message-input");
       const sendBtn = document.getElementById("send-btn");
       const messagesDiv = document.getElementById("messages");
@@ -1991,19 +2284,54 @@
       const suggestFab = document.getElementById("suggestions-fab");
       const suggestPanel = document.getElementById("suggestions-panel");
       const inputHint = document.getElementById("input-hint");
+      const inputAreaEl = document.getElementById("input-area");
 
-      // ── Mobile detection ─────────────────────────────────────────────
+      // ── Mobile ──
       const isMobile =
         /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(
           navigator.userAgent
         );
-      let currentConversationId = null;
-      let isIntentionalDisconnect = false;
-      let activeChip = null;
+      let currentConversationId = null,
+        isIntentionalDisconnect = false,
+        activeChip = null;
       if (isMobile)
         inputHint.textContent = "اضغط زرار الإرسال للإرسال · Enter سطر جديد";
 
-      // ── Theme ────────────────────────────────────────────────────────
+      // ── YouTube notice dismiss ──
+      document.getElementById("yt-notice-close").onclick = () => {
+        const n = document.getElementById("yt-notice");
+        n.classList.add("hidden");
+        setTimeout(() => (n.style.display = "none"), 300);
+      };
+
+      // ── ✅ FIX 1: Dynamic padding so messages never hide behind input ──
+      function syncMessagesPadding() {
+        const h = inputAreaEl.offsetHeight;
+        messagesDiv.style.paddingBottom = h + 12 + "px";
+      }
+      new ResizeObserver(syncMessagesPadding).observe(inputAreaEl);
+      syncMessagesPadding();
+
+      // ── ✅ FIX 2: Mobile virtual keyboard — shift input-area up with keyboard ──
+      if (window.visualViewport) {
+        const onVPChange = () => {
+          const vv = window.visualViewport;
+          // keyboard height = page height minus visible viewport minus any scroll offset
+          const kbHeight = Math.max(
+            0,
+            window.innerHeight - vv.height - vv.offsetTop
+          );
+          inputAreaEl.style.bottom = kbHeight + "px";
+          // re-sync padding after keyboard shift
+          syncMessagesPadding();
+          // scroll to bottom so latest message stays visible
+          messagesWrap.scrollTop = messagesWrap.scrollHeight;
+        };
+        window.visualViewport.addEventListener("resize", onVPChange);
+        window.visualViewport.addEventListener("scroll", onVPChange);
+      }
+
+      // ── Theme ──
       let currentTheme = localStorage.getItem("chat-theme") || "dark";
       applyTheme(currentTheme);
       themeBtn.onclick = () => {
@@ -2017,7 +2345,7 @@
         iconSun.style.display = t === "light" ? "block" : "none";
       }
 
-      // ── Suggestions data ──────────────────────────────────────────────
+      // ── Suggestions data ──
       const SUGGESTIONS = [
         {
           icon: "📄",
@@ -2080,8 +2408,6 @@
             "[CMD:CODE] COMMAND: PYTHON_SANDBOX_EXECUTION. You MUST write clean, optimal, and functional Python code, then execute it immediately within your sandboxed runtime environment. Do not just show the code—run it, handle any potential script exceptions, and print the definitive raw execution output and logical outcome for: ",
         },
       ];
-
-      // Build welcome caps + suggestions panel
       const wcGrid = document.getElementById("welcome-caps-grid");
       const spGrid = document.getElementById("sp-grid");
       SUGGESTIONS.forEach((s) => {
@@ -2090,7 +2416,6 @@
         wc.innerHTML = `<span class="cap-icon">${s.icon}</span><span class="cap-title">${s.title}</span>`;
         wc.onclick = () => activateChip(s);
         wcGrid.appendChild(wc);
-
         const sc = document.createElement("div");
         sc.className = "sp-cap";
         sc.innerHTML = `<span class="cap-icon">${s.icon}</span><span class="cap-title">${s.title}</span>`;
@@ -2100,8 +2425,6 @@
         };
         spGrid.appendChild(sc);
       });
-
-      // Suggestions FAB
       suggestFab.onclick = (e) => {
         e.stopPropagation();
         suggestPanel.classList.toggle("open");
@@ -2112,7 +2435,6 @@
         if (!suggestPanel.contains(e.target) && e.target !== suggestFab)
           suggestPanel.classList.remove("open");
       });
-
       function activateChip(suggestion) {
         activeChip = suggestion;
         document.getElementById("chip-icon-el").textContent = suggestion.icon;
@@ -2126,7 +2448,6 @@
         document.getElementById("active-chip").classList.remove("visible");
         messageInput.value = "";
       };
-
       function hideWelcome() {
         if (!welcomeScreen || welcomeScreen.style.display === "none") return;
         welcomeScreen.classList.add("hiding");
@@ -2137,7 +2458,7 @@
         suggestFab.classList.add("visible");
       }
 
-      // ── Lightbox ──────────────────────────────────────────────────────
+      // ── Lightbox ──
       function openLightbox(src, filename) {
         lightboxImg.src = src;
         lightboxDl.href = src;
@@ -2147,8 +2468,6 @@
       function closeLightbox() {
         lightbox.classList.remove("open");
       }
-
-      // ── PDF Modal ─────────────────────────────────────────────────────
       function openPdfModal(src, name) {
         document.getElementById("pdfModalTitle").textContent =
           name || "عرض الملف";
@@ -2161,7 +2480,6 @@
           document.getElementById("pdfModalFrame").src = "";
         }, 300);
       }
-
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
           closeLightbox();
@@ -2169,7 +2487,7 @@
         }
       });
 
-      // ── Code actions ──────────────────────────────────────────────────
+      // ── Code actions ──
       function copyCodeBlock(btn, encoded) {
         try {
           const text = decodeURIComponent(escape(atob(encoded)));
@@ -2190,18 +2508,16 @@
         setTimeout(() => (block.style.opacity = "1"), 350);
       }
 
-      // ── Auth ──────────────────────────────────────────────────────────
+      // ── Auth ──
       const token = localStorage.getItem("access_token");
       if (!token) window.location.href = "/login/";
       const userData = JSON.parse(localStorage.getItem("user_data") || "{}");
       const nameChip = document.getElementById("user-name-chip");
       if (nameChip && userData.name) {
         nameChip.textContent = userData.name;
-        // Set avatar initials
         const initials = userData.name.charAt(0).toUpperCase();
         document.getElementById("user-avatar-sidebar").textContent = initials;
         document.getElementById("nav-avatar").textContent = initials;
-        // Set welcome name
         const wn = document.getElementById("welcome-name");
         if (wn) wn.textContent = userData.name;
       }
@@ -2211,12 +2527,11 @@
         window.location.href = "/login/";
       };
 
-      // ── Streaming state ───────────────────────────────────────────────
-      let isStreaming = false;
-      let streamStopped = false;
+      // ── Streaming state ──
+      let isStreaming = false,
+        streamStopped = false;
       const SEND_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
       const STOP_SVG = `<svg viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>`;
-
       function setStreamingUI(on) {
         isStreaming = on;
         if (on) {
@@ -2232,14 +2547,13 @@
         }
       }
 
-      // ── WebSocket ─────────────────────────────────────────────────────
+      // ── WebSocket ──
       const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
       let guestId = localStorage.getItem("guest_chat_id");
       if (!guestId) {
         guestId = crypto.randomUUID();
         localStorage.setItem("guest_chat_id", guestId);
       }
-
       let chatSocket,
         typingRow = null,
         pendingFile = null;
@@ -2249,7 +2563,6 @@
       let reconnectAttempts = 0,
         reconnectTimer = null,
         disconnectBanner = null;
-
       function buildWsUrl(conversationId) {
         let url =
           ws_scheme +
@@ -2263,7 +2576,6 @@
           url += "&conversation_id=" + encodeURIComponent(conversationId);
         return url;
       }
-
       function connectWebSocket(conversationId) {
         chatSocket = new WebSocket(buildWsUrl(conversationId || null));
         chatSocket.onopen = () => {
@@ -2283,7 +2595,6 @@
           scheduleReconnect();
         };
       }
-
       function showDisconnectBanner() {
         if (disconnectBanner) return;
         disconnectBanner = document.createElement("div");
@@ -2298,7 +2609,6 @@
         scrollBottom();
         sendBtn.disabled = true;
       }
-
       function scheduleReconnect() {
         if (isIntentionalDisconnect) return;
         const delay = Math.min(2000 * Math.pow(2, reconnectAttempts), 15000);
@@ -2310,7 +2620,6 @@
           attachSocketHandlers();
         }, delay);
       }
-
       function attachSocketHandlers() {
         chatSocket.onmessage = function (e) {
           const data = JSON.parse(e.data);
@@ -2355,7 +2664,8 @@
             row.className = "msg-row bot";
             currentBotBubble = document.createElement("div");
             currentBotBubble.className = "msg-bubble";
-            row.appendChild(mkAv());
+            const av = mkAv(false);
+            row.appendChild(av);
             row.appendChild(currentBotBubble);
             messagesDiv.appendChild(row);
             setStreamingUI(true);
@@ -2367,6 +2677,7 @@
             streamBuffer += data.chunk;
             if (currentBotBubble) {
               currentBotBubble.innerHTML = marked.parse(streamBuffer);
+              highlightCodeIn(currentBotBubble);
               scrollBottom();
             }
             return;
@@ -2376,6 +2687,7 @@
             streamBuffer = data.text || "";
             if (currentBotBubble) {
               currentBotBubble.innerHTML = marked.parse(streamBuffer);
+              highlightCodeIn(currentBotBubble);
               scrollBottom();
             }
             return;
@@ -2455,27 +2767,18 @@
       attachSocketHandlers();
 
       function buildFileDownloadHTML(url, fileName, isWord) {
-        return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--r-lg);cursor:pointer;" onclick="window.open('${url}')">
-    <div style="width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:${
-      isWord ? "#2B579A" : "#1D6F42"
-    };">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="white">${
-        isWord
-          ? '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8" stroke="white" stroke-width="1.5" fill="none"/>'
-          : '<rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="white" stroke-width="1.5"/><line x1="3" y1="9" x2="21" y2="9" stroke="white" stroke-width="1.5"/>'
-      }</svg>
-    </div>
-    <div style="flex:1;min-width:0;">
-      <div style="color:var(--text-primary);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;">${fileName}</div>
-      <div style="color:var(--text-muted);font-size:11px;margin-top:3px;">${
-        isWord ? "Word Document" : "Excel Spreadsheet"
-      } · اضغط للتنزيل</div>
-    </div>
-    <a href="${url}" download="${fileName}" style="color:var(--accent);font-size:12px;white-space:nowrap;text-decoration:none;" onclick="event.stopPropagation()">⬇ تنزيل</a>
-  </div>`;
+        return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--r-lg);cursor:pointer;" onclick="window.open('${url}')"><div style="width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:${
+          isWord ? "#2B579A" : "#1D6F42"
+        };"><svg viewBox="0 0 24 24" width="18" height="18" fill="white">${
+          isWord
+            ? '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8" stroke="white" stroke-width="1.5" fill="none"/>'
+            : '<rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="white" stroke-width="1.5"/><line x1="3" y1="9" x2="21" y2="9" stroke="white" stroke-width="1.5"/>'
+        }</svg></div><div style="flex:1;min-width:0;"><div style="color:var(--text-primary);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;">${fileName}</div><div style="color:var(--text-muted);font-size:11px;margin-top:3px;">${
+          isWord ? "Word Document" : "Excel Spreadsheet"
+        } · اضغط للتنزيل</div></div><a href="${url}" download="${fileName}" style="color:var(--accent);font-size:12px;white-space:nowrap;text-decoration:none;" onclick="event.stopPropagation()">⬇ تنزيل</a></div>`;
       }
 
-      // ── Attach ────────────────────────────────────────────────────────
+      // ── Attach ──
       attachBtn.onclick = () => fileInput.click();
       fileInput.onchange = function () {
         const file = fileInput.files[0];
@@ -2534,7 +2837,7 @@
         ppVisual.innerHTML = "";
       }
 
-      // ── Send ──────────────────────────────────────────────────────────
+      // ── Send ──
       sendBtn.onclick = function () {
         if (isStreaming) {
           streamStopped = true;
@@ -2552,14 +2855,12 @@
         }
         sendMessage();
       };
-
       messageInput.addEventListener("keydown", function (e) {
         if (e.key === "Enter" && !e.shiftKey && !isMobile) {
           e.preventDefault();
           sendMessage();
         }
       });
-
       function sendMessage() {
         if (isRecording && recognition) {
           isRecording = false;
@@ -2575,7 +2876,6 @@
         if (!hasFile && !hasText) return;
         if (chatSocket.readyState !== WebSocket.OPEN) return;
         hideWelcome();
-
         if (hasFile && hasText) {
           const f = pendingFile;
           if (f.type === "pdf") appendUserFileChip(f.name, f.pdfURL);
@@ -2625,7 +2925,6 @@
         const actualPrompt = activeChip ? activeChip.chipPrompt + text : text;
         activeChip = null;
         document.getElementById("active-chip").classList.remove("visible");
-
         appendUserText(userVisibleText);
         messageInput.value = "";
         messageInput.style.height = "auto";
@@ -2634,14 +2933,14 @@
         sendBtn.disabled = true;
       }
 
-      // ── Render helpers ────────────────────────────────────────────────
-      function mkAv() {
+      // ── Render helpers ──
+      const ASTERISK_SVG = `<svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="30" height="30" rx="7.5" fill="#161614"/><g class="star-rays" transform="translate(15,15)"><line x1="0" y1="-8.5" x2="0" y2="8.5" stroke="#c8b89a" stroke-width="1.7" stroke-linecap="round"/><line x1="-8.5" y1="0" x2="8.5" y2="0" stroke="#c8b89a" stroke-width="1.7" stroke-linecap="round"/><line x1="-6" y1="-6" x2="6" y2="6" stroke="#c8b89a" stroke-width="1.7" stroke-linecap="round"/><line x1="6" y1="-6" x2="-6" y2="6" stroke="#c8b89a" stroke-width="1.7" stroke-linecap="round"/><circle cx="0" cy="0" r="2.2" fill="#c8b89a"/></g></svg>`;
+      function mkAv(isThinking = false) {
         const av = document.createElement("div");
-        av.className = "bot-av";
-        av.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`;
+        av.className = "bot-av" + (isThinking ? " thinking" : "");
+        av.innerHTML = ASTERISK_SVG;
         return av;
       }
-
       function appendUserText(text) {
         const row = document.createElement("div");
         row.className = "msg-row user";
@@ -2653,7 +2952,6 @@
         scrollBottom();
         return row;
       }
-
       function appendBotMessage(text) {
         try {
           const p = JSON.parse(text);
@@ -2693,13 +2991,13 @@
         const bubble = document.createElement("div");
         bubble.className = "msg-bubble";
         bubble.innerHTML = marked.parse(text);
+        highlightCodeIn(bubble);
         row.appendChild(mkAv());
         row.appendChild(bubble);
         messagesDiv.appendChild(row);
         scrollBottom();
         return row;
       }
-
       function buildImageRow(src, filename, isBot) {
         const row = document.createElement("div");
         row.className = `msg-row ${isBot ? "bot" : "user"}`;
@@ -2735,7 +3033,6 @@
         row.appendChild(bubble);
         return row;
       }
-
       function appendUserFileChip(name, pdfURL) {
         const row = document.createElement("div");
         row.className = "msg-row user";
@@ -2753,7 +3050,6 @@
         scrollBottom();
         return row;
       }
-
       function appendUserImage(src, name) {
         const row = document.createElement("div");
         row.className = "msg-row user";
@@ -2780,20 +3076,18 @@
         scrollBottom();
         return row;
       }
-
       function appendThinking() {
         const row = document.createElement("div");
         row.className = "msg-row bot";
         const wrap = document.createElement("div");
         wrap.className = "thinking-wrap";
-        wrap.innerHTML = `<div class="thinking-label"><span class="thinking-dot"></span><span>جاري التفكير…</span></div><div class="thinking-bars"><div class="think-bar"></div><div class="think-bar"></div><div class="think-bar"></div></div>`;
-        row.appendChild(mkAv());
+        wrap.innerHTML = `<div class="thinking-label"><div class="thinking-dots"><span></span><span></span><span></span></div><span>جاري التفكير</span></div><div class="thinking-bars"><div class="think-bar"></div><div class="think-bar"></div><div class="think-bar"></div></div>`;
+        row.appendChild(mkAv(true));
         row.appendChild(wrap);
         messagesDiv.appendChild(row);
         scrollBottom();
         return row;
       }
-
       function scrollBottom() {
         messagesWrap.scrollTop = messagesWrap.scrollHeight;
       }
@@ -2804,13 +3098,13 @@
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;");
       }
-
       messageInput.addEventListener("input", function () {
         this.style.height = "auto";
         this.style.height = Math.min(this.scrollHeight, 150) + "px";
+        syncMessagesPadding();
       });
 
-      // ── Delete modal ──────────────────────────────────────────────────
+      // ── Delete modal ──
       const deleteModalOverlay = document.getElementById("deleteModalOverlay");
       document
         .getElementById("openDeleteModalBtn")
@@ -2842,14 +3136,120 @@
           deleteModalOverlay.classList.remove("active");
         });
 
-      // ── Voice Input ───────────────────────────────────────────────────
+      // ── Share ──
+      const shareModalOverlay = document.getElementById("shareModalOverlay");
+      const shareLoadingEl = document.getElementById("share-loading");
+      const shareErrorEl = document.getElementById("share-error");
+      const shareResultEl = document.getElementById("share-result");
+      const shareUrlInput = document.getElementById("share-url-input");
+      const shareCopyBtn = document.getElementById("share-copy-btn");
+
+      function resetShareModal() {
+        shareLoadingEl.style.display = "flex";
+        shareErrorEl.style.display = "none";
+        shareErrorEl.textContent = "";
+        shareResultEl.style.display = "none";
+        shareUrlInput.value = "";
+        shareCopyBtn.textContent = "نسخ";
+        shareCopyBtn.classList.remove("copied");
+      }
+
+      function showShareError(message) {
+        shareLoadingEl.style.display = "none";
+        shareResultEl.style.display = "none";
+        shareErrorEl.textContent = message;
+        shareErrorEl.style.display = "block";
+        shareModalOverlay.classList.add("active");
+      }
+
+      function showShareLinkBox(fullUrl) {
+        shareLoadingEl.style.display = "none";
+        shareErrorEl.style.display = "none";
+        shareUrlInput.value = fullUrl;
+        shareResultEl.style.display = "block";
+        shareModalOverlay.classList.add("active");
+      }
+
+      async function getShareUrl() {
+        const res = await fetch("/api/share/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: token,
+            conversation_id: currentConversationId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.error || "حدث خطأ أثناء تجهيز رابط المشاركة");
+        }
+        return data;
+      }
+
+      document
+        .getElementById("share-btn")
+        .addEventListener("click", async () => {
+          if (!currentConversationId) {
+            alert("لازم تبدأ المحادثة الأول علشان تقدر تشاركها");
+            return;
+          }
+
+          resetShareModal();
+          shareModalOverlay.classList.add("active");
+
+          try {
+            const data = await getShareUrl();
+            const fullUrl = window.location.origin + data.share_url;
+
+            if (navigator.share) {
+              shareModalOverlay.classList.remove("active");
+              try {
+                await navigator.share({
+                  title: data.title || "محادثة مشتركة",
+                  text: "شاركتلك المحادثة دي:",
+                  url: fullUrl,
+                });
+              } catch (shareErr) {
+                if (shareErr && shareErr.name === "AbortError") return;
+                showShareLinkBox(fullUrl);
+              }
+            } else {
+              showShareLinkBox(fullUrl);
+            }
+          } catch (err) {
+            showShareError(err.message || "حدث خطأ أثناء تجهيز رابط المشاركة");
+          }
+        });
+
+      shareCopyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(shareUrlInput.value).then(() => {
+          shareCopyBtn.textContent = "تم النسخ";
+          shareCopyBtn.classList.add("copied");
+          setTimeout(() => {
+            shareCopyBtn.textContent = "نسخ";
+            shareCopyBtn.classList.remove("copied");
+          }, 2000);
+        });
+      });
+
+      document
+        .getElementById("closeShareModalBtn")
+        .addEventListener("click", () =>
+          shareModalOverlay.classList.remove("active")
+        );
+      shareModalOverlay.addEventListener("click", (e) => {
+        if (e.target === shareModalOverlay)
+          shareModalOverlay.classList.remove("active");
+      });
+
+      // ── Voice ──
       const micBtn = document.getElementById("mic-btn");
       const SpeechRecognition =
         window.SpeechRecognition || window.webkitSpeechRecognition;
       let recognition = null,
         isRecording = false,
-        isStopping = false;
-      let finalTranscript = "",
+        isStopping = false,
+        finalTranscript = "",
         originalValue = "";
       if (!SpeechRecognition) {
         micBtn.style.display = "none";
@@ -2913,10 +3313,9 @@
         };
       }
 
-      // ── Sidebar ────────────────────────────────────────────────────────
+      // ── Sidebar ──
       const sidebarEl = document.getElementById("sidebar");
       const sidebarOverlay = document.getElementById("sidebar-overlay");
-
       function openSidebar() {
         sidebarEl.classList.add("open");
         sidebarOverlay.classList.add("open");
@@ -2925,7 +3324,6 @@
         sidebarEl.classList.remove("open");
         sidebarOverlay.classList.remove("open");
       }
-
       document.getElementById("conversations-btn").onclick = () => {
         sidebarEl.classList.contains("open") ? closeSidebar() : openSidebar();
       };
@@ -2933,14 +3331,12 @@
       document.getElementById("sidebar-toggle").onclick = () => {
         sidebarEl.classList.contains("open") ? closeSidebar() : openSidebar();
       };
-
       let openDropdownId = null;
       function closeAllDropdowns() {
         document.querySelectorAll(".conv-dropdown").forEach((d) => d.remove());
         openDropdownId = null;
       }
       document.addEventListener("click", closeAllDropdowns);
-
       function renderConversations(conversations) {
         const list = document.getElementById("conversations-list");
         list.innerHTML = "";
@@ -2960,13 +3356,9 @@
               day: "numeric",
             });
           } catch (_) {}
-          item.innerHTML = `
-      <div class="conv-info">
-        <div class="conv-title">${escHtml(conv.title || "محادثة جديدة")}</div>
-        <div class="conv-date">${dateStr}</div>
-      </div>
-      <button class="conv-menu-btn" title="خيارات">⋮</button>`;
-
+          item.innerHTML = `<div class="conv-info"><div class="conv-title">${escHtml(
+            conv.title || "محادثة جديدة"
+          )}</div><div class="conv-date">${dateStr}</div></div><button class="conv-menu-btn" title="خيارات">⋮</button>`;
           item.addEventListener("click", (e) => {
             if (
               e.target.closest(".conv-menu-btn") ||
@@ -2975,7 +3367,6 @@
               return;
             switchConversation(conv.conversation_id);
           });
-
           const menuBtn = item.querySelector(".conv-menu-btn");
           menuBtn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -2984,9 +3375,7 @@
             openDropdownId = conv.conversation_id;
             const dd = document.createElement("div");
             dd.className = "conv-dropdown";
-            dd.innerHTML = `
-        <div class="conv-dd-item" id="dd-rename">✏️ تعديل الاسم</div>
-        <div class="conv-dd-item danger" id="dd-delete">🗑️ حذف المحادثة</div>`;
+            dd.innerHTML = `<div class="conv-dd-item" id="dd-rename">✏️ تعديل الاسم</div><div class="conv-dd-item danger" id="dd-delete">🗑️ حذف المحادثة</div>`;
             item.appendChild(dd);
             dd.querySelector("#dd-rename").onclick = (ev) => {
               ev.stopPropagation();
@@ -3021,7 +3410,6 @@
           list.appendChild(item);
         });
       }
-
       function resetChatUI() {
         messagesDiv.querySelectorAll(".msg-row").forEach((r) => r.remove());
         if (welcomeScreen) {
@@ -3041,7 +3429,6 @@
           disconnectBanner = null;
         }
       }
-
       function switchConversation(conversationId) {
         if (conversationId === currentConversationId) {
           closeSidebar();
@@ -3060,7 +3447,6 @@
         connectWebSocket(conversationId);
         attachSocketHandlers();
       }
-
       document.getElementById("new-chat-btn").onclick = () => {
         isIntentionalDisconnect = true;
         clearTimeout(reconnectTimer);
@@ -3075,432 +3461,6 @@
         connectWebSocket(null);
         attachSocketHandlers();
       };
-      (function setupShareButton() {
-        const shareBtn = document.querySelector(".btn-share");
-        if (!shareBtn) return;
-
-        shareBtn.onclick = async function () {
-          if (!currentConversationId) {
-            showToast("ابدأ محادثة الأول عشان تقدر تشاركها!", "warn");
-            return;
-          }
-
-          const token = localStorage.getItem("access_token");
-          if (!token) {
-            showToast("لازم تكون مسجّل دخول", "error");
-            return;
-          }
-
-          shareBtn.disabled = true;
-          shareBtn.textContent = "…";
-
-          try {
-            const res = await fetch("/api/share/", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                token: token,
-                conversation_id: currentConversationId,
-              }),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-              showToast(data.error || "فشل إنشاء الرابط", "error");
-              return;
-            }
-
-            const fullUrl = window.location.origin + data.share_url;
-
-            // نسخ الرابط للـ clipboard
-            try {
-              await navigator.clipboard.writeText(fullUrl);
-              showToast("✅ تم نسخ رابط المشاركة!", "success");
-            } catch (_) {
-              // fallback: show modal
-              showShareModal(fullUrl, data.title);
-            }
-          } catch (err) {
-            showToast("حدث خطأ: " + err.message, "error");
-          } finally {
-            shareBtn.disabled = false;
-            shareBtn.textContent = "مشاركة";
-          }
-        };
-      })();
-
-      // ─────────────────────────────────────────────────────────────────
-      // 2. Tool pills (بحث / بحث عميق / أدوات)
-      // ─────────────────────────────────────────────────────────────────
-
-      (function setupToolPills() {
-        // بيجيب كل الـ tool-pill buttons بالترتيب
-        const pills = document.querySelectorAll(".tool-pill");
-        if (!pills.length) return;
-
-        // pill[0] = بحث
-        // pill[1] = بحث عميق
-        // pill[2] = أدوات
-
-        // ── بحث ──
-        if (pills[0]) {
-          pills[0].onclick = function () {
-            togglePillActive(this, "search");
-          };
-        }
-
-        // ── بحث عميق ──
-        if (pills[1]) {
-          pills[1].onclick = function () {
-            togglePillActive(this, "deep_search");
-          };
-        }
-
-        // ── أدوات (dropdown) ──
-        if (pills[2]) {
-          pills[2].onclick = function (e) {
-            e.stopPropagation();
-            toggleToolsDropdown(this);
-          };
-        }
-
-        // active pill state
-        let activePillMode = null;
-
-        function togglePillActive(btn, mode) {
-          // reset كل الـ pills
-          pills.forEach((p) => p.classList.remove("pill-active"));
-
-          if (activePillMode === mode) {
-            // toggle off
-            activePillMode = null;
-            clearPillPrefix();
-          } else {
-            activePillMode = mode;
-            btn.classList.add("pill-active");
-            setPillPrefix(mode);
-          }
-        }
-
-        function setPillPrefix(mode) {
-          // بيضيف prefix مخفي للـ messageInput حتى الـ backend يتعرف عليه
-          // بنحفظ الـ prefix في data attribute
-          messageInput.dataset.pillPrefix =
-            mode === "search"
-              ? "[CMD:SEARCH] "
-              : "[CMD:SEARCH] بحث عميق ومفصل جداً عن: ";
-        }
-
-        function clearPillPrefix() {
-          delete messageInput.dataset.pillPrefix;
-        }
-
-        // نعمل override للـ sendMessage عشان يحط الـ prefix
-        const _originalSendMessage = window._originalSendMessage || sendMessage;
-        if (!window._pillPrefixPatched) {
-          window._pillPrefixPatched = true;
-          const origSend = sendMessage;
-
-          // patch: نضيف الـ prefix للـ message قبل الإرسال
-          const origInput = messageInput;
-          const origGetValue = Object.getOwnPropertyDescriptor(
-            HTMLTextAreaElement.prototype,
-            "value"
-          );
-
-          // بدل ما نعمل monkey patch صعب،
-          // هنعمل intercept في الـ sendMessage بدل ذلك
-          // عن طريق الاستماع لـ keydown وـ send btn بعد ما ضافهم الكود الأصلي
-          // الحل الأبسط: patch الـ chatSocket.send
-
-          const origWsSend = WebSocket.prototype.send;
-          WebSocket.prototype.send = function (data) {
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.message && messageInput.dataset.pillPrefix) {
-                // لو الرسالة مش بدأت بـ [CMD بالفعل
-                if (!parsed.message.startsWith("[CMD:")) {
-                  parsed.message =
-                    messageInput.dataset.pillPrefix + parsed.message;
-                  data = JSON.stringify(parsed);
-                }
-              }
-            } catch (_) {}
-            return origWsSend.call(this, data);
-          };
-        }
-
-        // tools dropdown
-        let toolsDropdown = null;
-
-        function toggleToolsDropdown(btn) {
-          if (toolsDropdown) {
-            toolsDropdown.remove();
-            toolsDropdown = null;
-            return;
-          }
-
-          toolsDropdown = document.createElement("div");
-          toolsDropdown.className = "tools-dropdown";
-          toolsDropdown.innerHTML = `
-      <div class="tools-dd-item" data-cmd="PDF">
-        <span>📄</span><div><b>تحليل PDF</b><p>اطرح سؤالاً على ملف PDF</p></div>
-      </div>
-      <div class="tools-dd-item" data-cmd="IMAGE_GEN">
-        <span>🎨</span><div><b>توليد صورة</b><p>أنشئ صورة من وصف</p></div>
-      </div>
-      <div class="tools-dd-item" data-cmd="IMAGE_ANALYZE">
-        <span>🖼️</span><div><b>تحليل صورة</b><p>حلّل صورة مرفوعة</p></div>
-      </div>
-      <div class="tools-dd-item" data-cmd="CODE">
-        <span>💻</span><div><b>تنفيذ كود</b><p>اكتب وشغّل Python</p></div>
-      </div>
-      <div class="tools-dd-item" data-cmd="WORD">
-        <span>📝</span><div><b>إنشاء Word</b><p>احصل على ملف .docx</p></div>
-      </div>
-      <div class="tools-dd-item" data-cmd="EXCEL">
-        <span>📊</span><div><b>إنشاء Excel</b><p>احصل على ملف .xlsx</p></div>
-      </div>
-      <div class="tools-dd-item" data-cmd="YOUTUBE">
-        <span>📺</span><div><b>تلخيص يوتيوب</b><p>لخّص فيديو من رابطه</p></div>
-      </div>
-      <div class="tools-dd-item" data-cmd="CALC">
-        <span>🧮</span><div><b>حسابات</b><p>حل مسائل رياضية</p></div>
-      </div>
-    `;
-
-          // position
-          const rect = btn.getBoundingClientRect();
-          toolsDropdown.style.cssText = `
-      position:fixed;
-      bottom:${window.innerHeight - rect.top + 8}px;
-      right:${window.innerWidth - rect.right}px;
-      background:var(--bg2,#141417);
-      border:1px solid var(--card-border,rgba(255,255,255,0.08));
-      border-radius:14px;
-      box-shadow:0 8px 40px rgba(0,0,0,0.4);
-      z-index:200;
-      min-width:220px;
-      overflow:hidden;
-      backdrop-filter:blur(20px);
-    `;
-
-          toolsDropdown.querySelectorAll(".tools-dd-item").forEach((item) => {
-            item.addEventListener("click", () => {
-              const cmd = item.dataset.cmd;
-              const labelMap = {
-                PDF: "تحليل PDF",
-                IMAGE_GEN: "توليد صورة",
-                IMAGE_ANALYZE: "تحليل صورة",
-                CODE: "تنفيذ كود",
-                WORD: "إنشاء Word",
-                EXCEL: "إنشاء Excel",
-                YOUTUBE: "تلخيص يوتيوب",
-                CALC: "حسابات",
-              };
-              const iconMap = {
-                PDF: "📄",
-                IMAGE_GEN: "🎨",
-                IMAGE_ANALYZE: "🖼️",
-                CODE: "💻",
-                WORD: "📝",
-                EXCEL: "📊",
-                YOUTUBE: "📺",
-                CALC: "🧮",
-              };
-              const prefixMap = {
-                PDF: "[CMD:PDF] ",
-                IMAGE_GEN: "[CMD:IMAGE] ",
-                IMAGE_ANALYZE: "[CMD:ANALYZE_IMAGE] ",
-                CODE: "[CMD:CODE] ",
-                WORD: "[CMD:WORD] ",
-                EXCEL: "[CMD:EXCEL] ",
-                YOUTUBE: "[CMD:YOUTUBE] ",
-                CALC: "[CMD:CALC] ",
-              };
-              activateChip({
-                icon: iconMap[cmd],
-                title: labelMap[cmd],
-                chipPrompt: prefixMap[cmd],
-              });
-              toolsDropdown.remove();
-              toolsDropdown = null;
-              pills.forEach((p) => p.classList.remove("pill-active"));
-              activePillMode = null;
-              clearPillPrefix();
-            });
-          });
-
-          document.body.appendChild(toolsDropdown);
-          setTimeout(() => {
-            document.addEventListener("click", function closeDD(ev) {
-              if (!toolsDropdown) return;
-              if (!toolsDropdown.contains(ev.target)) {
-                toolsDropdown.remove();
-                toolsDropdown = null;
-              }
-              document.removeEventListener("click", closeDD);
-            });
-          }, 10);
-        }
-      })();
-
-      // ─────────────────────────────────────────────────────────────────
-      // 3. Styles للـ pills والـ dropdown
-      // ─────────────────────────────────────────────────────────────────
-
-      (function injectStyles() {
-        const style = document.createElement("style");
-        style.textContent = `
-    /* Active pill */
-    .tool-pill.pill-active {
-      background: var(--accent-dim, rgba(200,184,154,0.12));
-      border-color: rgba(200,184,154,0.25) !important;
-      color: var(--accent, #c8b89a) !important;
-    }
-    .tool-pill.pill-active svg {
-      stroke: var(--accent, #c8b89a);
-    }
-
-    /* Tools dropdown */
-    .tools-dd-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 14px;
-      cursor: pointer;
-      transition: background .12s;
-      border-bottom: 1px solid var(--card-border, rgba(255,255,255,0.06));
-    }
-    .tools-dd-item:last-child { border-bottom: none; }
-    .tools-dd-item:hover { background: var(--card-bg-hover, rgba(255,255,255,0.06)); }
-    .tools-dd-item > span { font-size: 18px; flex-shrink: 0; }
-    .tools-dd-item b { font-size: 13px; color: var(--text-primary,#f0ede8); font-weight:500; }
-    .tools-dd-item p { font-size: 11px; color: var(--text-muted,#5c5854); margin-top:1px; }
-
-    /* Toast */
-    .chat-toast {
-      position: fixed;
-      bottom: 100px;
-      left: 50%;
-      transform: translateX(-50%) translateY(0);
-      background: var(--bg2, #141417);
-      border: 1px solid var(--card-border, rgba(255,255,255,0.1));
-      border-radius: 100px;
-      padding: 9px 20px;
-      font-size: 13px;
-      color: var(--text-primary, #f0ede8);
-      z-index: 999;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-      animation: toastIn .2s ease;
-      white-space: nowrap;
-    }
-    .chat-toast.success { border-color: rgba(74,222,128,0.3); color:#4ade80; }
-    .chat-toast.error   { border-color: rgba(224,85,85,0.3);  color:#e05555; }
-    .chat-toast.warn    { border-color: rgba(251,191,36,0.3); color:#fbbf24; }
-    @keyframes toastIn {
-      from { opacity:0; transform:translateX(-50%) translateY(10px); }
-      to   { opacity:1; transform:translateX(-50%) translateY(0); }
-    }
-
-    /* Share modal */
-    #share-modal-overlay {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px);
-      display: flex; align-items: center; justify-content: center;
-      z-index: 500;
-    }
-    #share-modal-card {
-      background: var(--bg2, #141417);
-      border: 1px solid var(--card-border, rgba(255,255,255,0.08));
-      border-radius: 18px;
-      padding: 28px;
-      max-width: 420px;
-      width: 90%;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-    }
-    #share-modal-card h3 { font-size: 16px; margin-bottom: 8px; color: var(--text-primary,#f0ede8); }
-    #share-modal-card p { font-size: 12.5px; color: var(--text-muted,#5c5854); margin-bottom: 14px; }
-    #share-url-input {
-      width: 100%; padding: 9px 12px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--card-border,rgba(255,255,255,0.1));
-      border-radius: 8px; color: var(--text-primary,#f0ede8);
-      font-size: 12.5px; outline: none;
-      direction: ltr; text-align: left;
-    }
-    .share-modal-actions { display:flex; gap:8px; margin-top:12px; justify-content:flex-end; }
-    .share-copy-btn {
-      padding: 7px 16px;
-      background: var(--accent-dim,rgba(200,184,154,0.12));
-      border: 1px solid rgba(200,184,154,0.2);
-      border-radius: 8px;
-      font-size: 13px; font-weight: 500;
-      color: var(--accent,#c8b89a);
-      cursor: pointer; font-family:inherit;
-      transition: background .15s;
-    }
-    .share-copy-btn:hover { background: rgba(200,184,154,0.2); }
-    .share-close-btn {
-      padding: 7px 16px;
-      background: var(--btn-primary,rgba(255,255,255,0.07));
-      border: 1px solid var(--card-border,rgba(255,255,255,0.1));
-      border-radius: 8px;
-      font-size: 13px; font-weight: 500;
-      color: var(--text-secondary,#9a9490);
-      cursor: pointer; font-family:inherit;
-      transition: background .15s;
-    }
-  `;
-        document.head.appendChild(style);
-      })();
-
-      // ─────────────────────────────────────────────────────────────────
-      // 4. Helper functions
-      // ─────────────────────────────────────────────────────────────────
-
-      function showToast(msg, type = "info") {
-        // ازل أي toast موجود
-        document.querySelectorAll(".chat-toast").forEach((t) => t.remove());
-        const t = document.createElement("div");
-        t.className = `chat-toast ${type}`;
-        t.textContent = msg;
-        document.body.appendChild(t);
-        setTimeout(() => {
-          t.style.opacity = "0";
-          t.style.transition = "opacity .3s";
-          setTimeout(() => t.remove(), 300);
-        }, 3000);
-      }
-
-      function showShareModal(url, title) {
-        const overlay = document.createElement("div");
-        overlay.id = "share-modal-overlay";
-        overlay.innerHTML = `
-    <div id="share-modal-card">
-      <h3>🔗 رابط المشاركة جاهز</h3>
-      <p>المحادثة: ${escHtml(title || "محادثة")}</p>
-      <input id="share-url-input" type="text" value="${escHtml(
-        url
-      )}" readonly onclick="this.select()" />
-      <div class="share-modal-actions">
-        <button class="share-close-btn" onclick="this.closest('#share-modal-overlay').remove()">إغلاق</button>
-        <button class="share-copy-btn" onclick="
-          navigator.clipboard.writeText('${escHtml(url)}').then(()=>{
-            this.textContent='✅ تم النسخ!';
-            setTimeout(()=>this.textContent='نسخ الرابط',2000);
-          });
-        ">نسخ الرابط</button>
-      </div>
-    </div>
-  `;
-        overlay.addEventListener("click", (e) => {
-          if (e.target === overlay) overlay.remove();
-        });
-        document.body.appendChild(overlay);
-      }
     </script>
   </body>
 </html>

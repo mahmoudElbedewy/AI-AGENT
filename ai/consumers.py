@@ -2686,19 +2686,32 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return f"❌ خطأ أثناء الاتصال بخدمة توليد الصور: {str(e)}"            #=======================================
 
     async def _simple_chat(self, message: str, history: list) -> str:
-        """محادثة عادية مع streaming و history"""
+        """محادثة عادية مع streaming و history و cross-conversation memory"""
         from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-
+ 
         recent = history[-15:] if len(history) > 6 else history
         file_ctx = self._get_recent_file_context()
-
+ 
+        user_facts = await self.load_user_memories()
+ 
         full_system = self.formatted_system_prompt
+ 
+        if user_facts.strip():
+            full_system += (
+                f"\n\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"MEMORY — WHAT YOU KNOW ABOUT THIS USER\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"The following facts were learned from previous conversations with this user.\n"
+                f"Use them naturally when relevant — never list them robotically.\n\n"
+                f"{user_facts}\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+            )
+ 
         if file_ctx.strip():
             full_system += f"\n\n[CONTEXT OF UPLOADED FILES]:\n{file_ctx}"
         if hasattr(self, "last_youtube_transcript") and self.last_youtube_transcript:
             full_system += f"\n\n[Last YouTube Video Content]:\n{self.last_youtube_transcript[:4000]}"
-
-
+ 
         chat_messages = [SystemMessage(content=full_system)]
         for h in recent:
             if h["role"] == "user":
@@ -2706,7 +2719,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             elif h["role"] == "bot":
                 chat_messages.append(AIMessage(content=h["message"]))
         chat_messages.append(HumanMessage(content=message))
-
+ 
         raw_content = ""
         async for text in stream_llm_async(simple_chat_llm, chat_messages):
             raw_content += text
@@ -2842,6 +2855,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
             print(f"Reply repair failed: {repair_err}")
 
         return "تمام يا صاحبي، فهمتك. قولّي محتاج تعرف إيه بالظبط وأنا هجاوبك بشكل مباشر وبسيط."
+
+    @database_sync_to_async
+    def load_user_memories(self) -> str:
+        """بترجع الـ facts المحفوظة للـ user من أي conversation سابقة"""
+        try:
+            with sqlite3.connect(self.db, timeout=20) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT facts FROM user_memories WHERE user_id = ?",
+                    (self.user_id,),
+                )
+                row = cursor.fetchone()
+                return row[0].strip() if row and row[0] else ""
+        except Exception as e:
+            print(f"load_user_memories failed: {e}")
+            return ""
 
     async def _classify_intent(self, message: str, last_bot_reply: str = "") -> str:
 
@@ -3038,7 +3067,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return await self._prepare_bot_reply(raw_content, message)
 
     @database_sync_to_async
-    def update_user_memories(self, new_messages_text):
+    def update_user_memories(self, new_messages_text: str):
+        """
+        بتستخرج الـ facts المهمة من المحادثة وتضيفها للـ memories.
+        بتعمل merge ذكي بدل raw dump — عشان الـ memories متكبرش ببلاش.
+        """
         try:
             with sqlite3.connect(self.db, timeout=30) as conn:
                 cursor = conn.cursor()
@@ -3048,19 +3081,80 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
                 row = cursor.fetchone()
                 current_facts = row[0].strip() if row and row[0] else ""
-                new_fact = str(new_messages_text).strip()[:4000]
-                updated_facts = (
-                    f"{current_facts}\n\n{new_fact}".strip()
-                    if current_facts
-                    else new_fact
-                )
+ 
+            # ── استخرج الـ facts الجديدة من المحادثة ──
+            extract_prompt = f"""Extract only new, useful personal facts about the user from this conversation.
+ 
+                Focus on: name, nickname, job, city, age, hobbies, preferences, goals, skills, language preference, family details, recurring topics.
+                
+                Rules:
+                - Write each fact as a short sentence: "User's name is Mahmoud", "User works in software engineering", "User prefers responses in Egyptian Arabic"
+                - Only include facts that are clearly stated or strongly implied by the user
+                - Skip facts that are already covered in [EXISTING FACTS]
+                - Skip AI responses, questions, and opinions
+                - If no new personal facts exist in this conversation, reply with exactly: NONE
+                - Max 5 new facts per call
+                
+                [EXISTING FACTS]:
+                {current_facts if current_facts else "None yet"}
+                
+                [CONVERSATION TO ANALYZE]:
+                {str(new_messages_text).strip()[:3000]}
+                
+                New facts (or NONE):"""
+                
+            try:
+                response = light_3_groq.invoke(extract_prompt)
+                extracted = (
+                    response.content if hasattr(response, "content") else str(response)
+                ).strip()
+            except Exception as llm_err:
+                print(f"Memory extract LLM failed: {llm_err}")
+                extracted = str(new_messages_text).strip()[:500]
+ 
+            if not extracted or extracted.upper() == "NONE":
+                return
+ 
+            if current_facts:
+                combined = f"{current_facts}\n{extracted}"
+                if len(combined) > 3000:
+                    compress_prompt = f"""Merge and deduplicate these user facts into a clean, concise list.
+                        Keep only the most recent/accurate version of each fact.
+                        Format: one fact per line, short sentences.
+                        Max 20 facts total.
+                        
+                        Facts to merge:
+                        {combined}
+                        
+                        Merged facts:"""
+                    try:
+                        compressed = light_3_groq.invoke(compress_prompt)
+                        updated_facts = (
+                            compressed.content
+                            if hasattr(compressed, "content")
+                            else str(compressed)
+                        ).strip()
+                    except Exception:
+                        # fallback: keep آخر 3000 حرف
+                        updated_facts = combined[-3000:]
+                else:
+                    updated_facts = combined
+            else:
+                updated_facts = extracted
+ 
+            with sqlite3.connect(self.db, timeout=30) as conn:
+                cursor = conn.cursor()
                 cursor.execute(
                     "REPLACE INTO user_memories (user_id, facts) VALUES (?, ?)",
-                    (self.user_id, updated_facts),
+                    (self.user_id, updated_facts.strip()),
                 )
                 conn.commit()
+ 
+            print(f"[Memory] Updated for {self.user_id}: {extracted[:100]}...")
+ 
         except Exception as me:
             print(f"Memory update failed: {me}")
+ 
 
     def _get_recent_file_context(self) -> str:
         context = ""

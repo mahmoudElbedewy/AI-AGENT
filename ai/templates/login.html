@@ -1,176 +1,293 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تسجيل الدخول - مساعد الذكاء الاصطناعي</title>
-
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Markazi+Text:wght@500;600;700&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تسجيل الدخول — SALY</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg viewBox='0 0 30 30' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='30' height='30' rx='7.5' fill='%23161614'/%3E%3Cg transform='translate(15,15)'%3E%3Cline x1='0' y1='-8.5' x2='0' y2='8.5' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Cline x1='-8.5' y1='0' x2='8.5' y2='0' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Cline x1='-6' y1='-6' x2='6' y2='6' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Cline x1='6' y1='-6' x2='-6' y2='6' stroke='%23c8b89a' stroke-width='1.7' stroke-linecap='round'/%3E%3Ccircle cx='0' cy='0' r='2.2' fill='%23c8b89a'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Markazi+Text:wght@500;600;700&family=Tajawal:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
 
     <style>
-        :root {
-            --bg: #1f1d1a;
-            --fg: #f6f1e7;
-            --fg-secondary: #a39a8c;
-            --placeholder: #8a8276;
-            --input-bg: rgba(255, 255, 255, 0.05);
-            --input-border: rgba(255, 255, 255, 0.13);
-            --input-border-focus: rgba(246, 241, 231, 0.45);
-            --btn-bg: #f9f5ec;
-            --btn-text: #1f1d1a;
-            --error-bg: rgba(216, 119, 87, 0.12);
-            --error-border: rgba(216, 119, 87, 0.35);
-            --error-text: #e2916f;
-            --radius-input: 10px;
-            --radius-btn: 8px;
-            --font-display: 'Markazi Text', serif;
-            --font-body: 'Tajawal', sans-serif;
-        }
+      :root {
+        --bg: #1f1d1a;
+        --fg: #f6f1e7;
+        --fg-secondary: #a39a8c;
+        --placeholder: #8a8276;
+        --input-bg: rgba(255, 255, 255, 0.05);
+        --input-border: rgba(255, 255, 255, 0.13);
+        --input-border-focus: rgba(246, 241, 231, 0.45);
+        --btn-bg: #f9f5ec;
+        --btn-text: #1f1d1a;
+        --error-bg: rgba(216, 119, 87, 0.12);
+        --error-border: rgba(216, 119, 87, 0.35);
+        --error-text: #e2916f;
+        --accent: #c8b89a;
+        --radius-input: 10px;
+        --radius-btn: 8px;
+        --font-display: "Playfair Display", serif;
+        --font-body: "Tajawal", sans-serif;
+      }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
 
-        body {
-            font-family: var(--font-body);
-            background-color: var(--bg);
-            background-image: radial-gradient(120% 90% at 15% 0%, rgba(255, 255, 255, 0.05), transparent 55%);
-            color: var(--fg);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-        }
+      body {
+        font-family: var(--font-body);
+        background-color: var(--bg);
+        background-image: radial-gradient(
+          120% 90% at 15% 0%,
+          rgba(255, 255, 255, 0.05),
+          transparent 55%
+        );
+        color: var(--fg);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+      }
 
-        .login-card {
-            width: 100%;
-            max-width: 400px;
-            padding: 0 20px;
-        }
+      .login-card {
+        width: 100%;
+        max-width: 400px;
+        padding: 0 20px;
+      }
 
-        .login-card h2 {
-            font-family: var(--font-display);
-            font-weight: 600;
-            text-align: center;
-            margin-bottom: 32px;
-            font-size: 34px;
-            letter-spacing: -0.3px;
-            color: var(--fg);
-        }
+      /* ── Logo mark ── */
+      .brand {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 28px;
+      }
+      .brand-icon {
+        width: 34px;
+        height: 34px;
+        flex-shrink: 0;
+      }
+      .brand-name {
+        font-family: var(--font-display);
+        font-size: 26px;
+        font-weight: 400;
+        letter-spacing: -0.02em;
+        color: var(--fg);
+      }
 
-        .form-group { margin-bottom: 18px; }
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            color: var(--fg-secondary);
-            font-size: 14px;
-            font-weight: 500;
-        }
-        .form-group input {
-            width: 100%;
-            padding: 12px 14px;
-            background: var(--input-bg);
-            border: 1px solid var(--input-border);
-            border-radius: var(--radius-input);
-            font-size: 14px;
-            color: var(--fg);
-            font-family: var(--font-body);
-            outline: none;
-            transition: border-color 0.2s, background 0.2s;
-        }
-        .form-group input::placeholder { color: var(--placeholder); }
-        .form-group input:focus {
-            border-color: var(--input-border-focus);
-            background: rgba(255, 255, 255, 0.07);
-        }
+      .login-card h2 {
+        font-family: "Markazi Text", serif;
+        font-weight: 600;
+        text-align: center;
+        margin-bottom: 32px;
+        font-size: 34px;
+        letter-spacing: -0.3px;
+        color: var(--fg-secondary);
+      }
 
-        .login-btn {
-            width: 100%;
-            margin-top: 6px;
-            padding: 12px;
-            background-color: var(--btn-bg);
-            color: var(--btn-text);
-            border: none;
-            border-radius: var(--radius-btn);
-            font-size: 15px;
-            font-weight: 700;
-            font-family: var(--font-body);
-            cursor: pointer;
-            transition: opacity 0.2s, transform 0.15s;
-        }
-        .login-btn:hover { opacity: 0.88; }
-        .login-btn:active { transform: scale(0.98); }
+      .form-group {
+        margin-bottom: 18px;
+      }
+      .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--fg-secondary);
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .form-group input {
+        width: 100%;
+        padding: 12px 14px;
+        background: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: var(--radius-input);
+        font-size: 14px;
+        color: var(--fg);
+        font-family: var(--font-body);
+        outline: none;
+        transition: border-color 0.2s, background 0.2s;
+      }
+      .form-group input::placeholder {
+        color: var(--placeholder);
+      }
+      .form-group input:focus {
+        border-color: var(--input-border-focus);
+        background: rgba(255, 255, 255, 0.07);
+      }
 
-        .error-msg {
-            background: var(--error-bg);
-            border: 1px solid var(--error-border);
-            color: var(--error-text);
-            font-size: 13px;
-            text-align: center;
-            padding: 10px 14px;
-            border-radius: 8px;
-            margin-bottom: 18px;
-            display: none;
-        }
+      .login-btn {
+        width: 100%;
+        margin-top: 6px;
+        padding: 12px;
+        background-color: var(--btn-bg);
+        color: var(--btn-text);
+        border: none;
+        border-radius: var(--radius-btn);
+        font-size: 15px;
+        font-weight: 700;
+        font-family: var(--font-body);
+        cursor: pointer;
+        transition: opacity 0.2s, transform 0.15s;
+      }
+      .login-btn:hover {
+        opacity: 0.88;
+      }
+      .login-btn:active {
+        transform: scale(0.98);
+      }
 
-        .register-link { text-align: center; margin-top: 28px; font-size: 13px; color: var(--fg-secondary); }
-        .register-link a { color: var(--fg); font-weight: 700; text-decoration: none; transition: opacity 0.2s; }
-        .register-link a:hover { opacity: 0.75; text-decoration: underline; }
+      .error-msg {
+        background: var(--error-bg);
+        border: 1px solid var(--error-border);
+        color: var(--error-text);
+        font-size: 13px;
+        text-align: center;
+        padding: 10px 14px;
+        border-radius: 8px;
+        margin-bottom: 18px;
+        display: none;
+      }
+
+      .register-link {
+        text-align: center;
+        margin-top: 28px;
+        font-size: 13px;
+        color: var(--fg-secondary);
+      }
+      .register-link a {
+        color: var(--fg);
+        font-weight: 700;
+        text-decoration: none;
+        transition: opacity 0.2s;
+      }
+      .register-link a:hover {
+        opacity: 0.75;
+        text-decoration: underline;
+      }
     </style>
-</head>
-<body>
-
+  </head>
+  <body>
     <div class="login-card">
-        <h2>تسجيل الدخول</h2>
-        <div class="error-msg" id="error-box"></div>
-        <form id="login-form">
-            <div class="form-group">
-                <label for="username">اسم المستخدم</label>
-                <input type="text" id="username" required placeholder="اكتب اسم المستخدم">
-            </div>
-            <div class="form-group">
-                <label for="password">كلمة المرور</label>
-                <input type="password" id="password" required placeholder="اكتب كلمة المرور">
-            </div>
-            <button type="submit" class="login-btn">دخول</button>
-        </form>
+      <!-- Logo -->
+      <div class="brand">
+        <svg
+          class="brand-icon"
+          viewBox="0 0 30 30"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <rect width="30" height="30" rx="7.5" fill="#161614" />
+          <g transform="translate(15,15)">
+            <line
+              x1="0"
+              y1="-8.5"
+              x2="0"
+              y2="8.5"
+              stroke="#c8b89a"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+            <line
+              x1="-8.5"
+              y1="0"
+              x2="8.5"
+              y2="0"
+              stroke="#c8b89a"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+            <line
+              x1="-6"
+              y1="-6"
+              x2="6"
+              y2="6"
+              stroke="#c8b89a"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+            <line
+              x1="6"
+              y1="-6"
+              x2="-6"
+              y2="6"
+              stroke="#c8b89a"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+            <circle cx="0" cy="0" r="2.2" fill="#c8b89a" />
+          </g>
+        </svg>
+        <span class="brand-name">SALY</span>
+      </div>
 
-        <div class="register-link">
-            <p>ليس لديك حساب؟ <a href="/register/">إنشاء حساب جديد</a></p>
+      <h2>تسجيل الدخول</h2>
+      <div class="error-msg" id="error-box"></div>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="username">اسم المستخدم</label>
+          <input
+            type="text"
+            id="username"
+            required
+            placeholder="اكتب اسم المستخدم"
+          />
         </div>
+        <div class="form-group">
+          <label for="password">كلمة المرور</label>
+          <input
+            type="password"
+            id="password"
+            required
+            placeholder="اكتب كلمة المرور"
+          />
+        </div>
+        <button type="submit" class="login-btn">دخول</button>
+      </form>
+
+      <div class="register-link">
+        <p>ليس لديك حساب؟ <a href="/register/">إنشاء حساب جديد</a></p>
+      </div>
     </div>
 
     <script>
-        document.getElementById('login-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const errorBox = document.getElementById('error-box');
-            
-            errorBox.style.display = 'none';
-
-            try {
-                const response = await fetch('/api/login/', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    localStorage.setItem('access_token', data.access_token);
-                    localStorage.setItem('user_data', JSON.stringify(data.user_data));
-                    window.location.href = '/';
-                } else {
-                    errorBox.textContent = data.error || 'فشل تسجيل الدخول';
-                    errorBox.style.display = 'block';
-                }
-            } catch (err) {
-                errorBox.textContent = 'مشكلة في الاتصال بالسيرفر';
-                errorBox.style.display = 'block';
+      document
+        .getElementById("login-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const username = document.getElementById("username").value;
+          const password = document.getElementById("password").value;
+          const errorBox = document.getElementById("error-box");
+          errorBox.style.display = "none";
+          try {
+            const response = await fetch("/api/login/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username, password }),
+            });
+            const data = await response.json();
+            if (response.ok) {
+              localStorage.setItem("access_token", data.access_token);
+              localStorage.setItem("user_data", JSON.stringify(data.user_data));
+              window.location.href = "/";
+            } else {
+              errorBox.textContent = data.error || "فشل تسجيل الدخول";
+              errorBox.style.display = "block";
             }
+          } catch (err) {
+            errorBox.textContent = "مشكلة في الاتصال بالسيرفر";
+            errorBox.style.display = "block";
+          }
         });
     </script>
-</body>
+  </body>
 </html>
